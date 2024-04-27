@@ -1,6 +1,6 @@
 # -------------------------------------------------- #
 #       Latent Space Path Minimisation Models        #
-#                   Matt Sampson                     :# 
+#                   Matt Sampson                     # 
 #                  Peter Melchior                    # 
 #                                                    #
 # Initial LatentODE-RNN architecture modified from   #
