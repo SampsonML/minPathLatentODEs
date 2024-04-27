@@ -304,20 +304,13 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
 
     if func == "LVE":
         vector_field = LVE
-        args = LVE_args
         bounds = [
             (0.5, 1.5),
             (0.5, 1.5),
             (1.5, 2.5),
             (0.5, 1.5),
         ]  # same as https://arxiv.org/pdf/2105.03835.pdf
-        key = jax.random.PRNGKey(0)
-        #key_dataset = jr.split(key, dataset_size)
-        args = tuple(
-            jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub)
-            for (lb, ub) in bounds
-        )
-        args = jnp.squeeze(jnp.asarray(args))
+        # NOTE: args are randomly samples for each dataset between the bounds
     elif func == "SHO":
         vector_field = SHO
         args = SHO_args  # Fixed damping rate
@@ -341,6 +334,7 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
         return sol.ys
 
 
+    # Hard coding some things for now to be sure works as expected
     def solveLVE(ts, y0, key):
         bounds = [
             (0.5, 1.5),
