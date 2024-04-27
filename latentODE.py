@@ -256,7 +256,7 @@ class LatentODE(eqx.Module):
 
 def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     ykey, tkey1, tkey2 = jr.split(key, 3)
-    y0 = jr.uniform(ykey, (dataset_size, 2), minval=0, maxval=3)  # ranomize the ICs
+    y0 = jr.uniform(ykey, (dataset_size, 2), minval=2, maxval=5)  # ranomize the ICs
     t0 = 0
     # randomize the total time series between t_end and 2 * t_end (t_end is user defined)
     t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=0, maxval=t_end)
@@ -311,10 +311,12 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
             (0.5, 1.5),
         ]  # same as https://arxiv.org/pdf/2105.03835.pdf
         key = jax.random.PRNGKey(0)
+        #key_dataset = jr.split(key, dataset_size)
         args = tuple(
             jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub)
             for (lb, ub) in bounds
         )
+        args = jnp.squeeze(jnp.asarray(args))
     elif func == "SHO":
         vector_field = SHO
         args = SHO_args  # Fixed damping rate
@@ -337,7 +339,35 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
         )
         return sol.ys
 
-    ys = jax.vmap(solve)(ts, y0)
+
+    def solveLVE(ts, y0, key):
+        bounds = [
+            (0.5, 1.5),
+            (0.5, 1.5),
+            (1.5, 2.5),
+            (0.5, 1.5),
+        ]  # same as https://arxiv.org/pdf/2105.03835.pdf
+        args = tuple(jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub) for (lb, ub) in bounds)
+        args = jnp.squeeze(jnp.asarray(args))
+        sol = diffrax.diffeqsolve(
+            diffrax.ODETerm(vector_field),
+            diffrax.Tsit5(),
+            ts[0],
+            ts[-1],
+            dt0,
+            y0,
+            args=args,
+            saveat=diffrax.SaveAt(ts=ts),
+        )
+        return sol.ys
+
+    # for now seperate the call to LVE to allow random input params
+    if func == "LVE":
+        key = jax.random.PRNGKey(0)
+        key_dataset = jr.split(key, dataset_size)
+        ys = jax.vmap(solveLVE)(ts, y0, key_dataset)
+    else:
+        ys = jax.vmap(solve)(ts, y0)
 
     return ts, ys
 
@@ -532,7 +562,7 @@ def main(
         ICs = model.sample(sample_t, key=sample_key)[0, :]  # randomly sample for ICs
         exact_y = solve(sample_t, ICs)
         latent, _, _ = model._latent(sample_t, exact_y, key=sample_key)
-        sample_y = model._sample(sample_t, latent, key=sample_key)
+        sample_y = model._sample(sample_t, latent)
         # sample_y = model.sample(sample_t, key=sample_key)
         # sample_t = np.asarray(sample_t)
         sample_y = np.asarray(sample_y)
@@ -565,7 +595,7 @@ def main(
             # Get the latent mapping for the exact ODE
             latent, _, _ = model._latent(sample_t, exact_y, key=sample_key)
             # Get the predicted trajectory
-            sample_y = model._sample(sample_t, latent, key=sample_key)
+            sample_y = model._sample(sample_t, latent)
             # Now to plot the latent space trajectories
             sample_latent = model._sampleLatent(sample_t, latent)
 
@@ -723,15 +753,17 @@ def main(
 
 # run the code son
 main(
+    dataset_size=20000,  # number of data n_points 
+    batch_size=256,  # batch size
     n_points=150,  # number of points in the ODE data
     lr=1e-2,  # learning rate
-    steps=1001,  # number of training steps
-    plot_every=50,  # plot every n steps
-    save_every=50,  # save the model every n steps
-    hidden_size=6,  # hidden size of the RNN
-    latent_size=2,  # latent size of the autoencoder
-    width_size=16,  # width of the ODE
-    depth=2,  # depth of the ODE
+    steps=301,  # number of training steps
+    plot_every=100,  # plot every n steps
+    save_every=100,  # save the model every n steps
+    hidden_size=8,  # hidden size of the RNN
+    latent_size=6,  # latent size of the autoencoder
+    width_size=32,  # width of the ODE
+    depth=3,  # depth of the ODE
     alpha=2.5,  # strength of the path penalty
     seed=1992,  # random seed
     t_final=10,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
