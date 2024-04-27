@@ -1,6 +1,7 @@
 # -------------------------------------------------- #
 #       Latent Space Path Minimisation Models        #
-#                Matt Sampson (2024)                 # 
+#                   Matt Sampson                     :# 
+#                  Peter Melchior                    # 
 #                                                    #
 # Initial LatentODE-RNN architecture modified from   #
 # https://arxiv.org/abs/1907.03907, with jax/diffrax #
