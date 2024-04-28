@@ -302,6 +302,14 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
 
     PFHO_args = (1, 1, 1, 3)  # w, b, k, force
 
+
+    # --------------------------------------
+    # WaterBucket
+    # TODO: implement Peters water model
+    def Water(t, y, args):
+        pass
+
+
     if func == "LVE":
         vector_field = LVE
         bounds = [
@@ -413,7 +421,7 @@ def main(
         d_y = jnp.array([d_prey, d_predator])
         return d_y
 
-    LVE_args = (1.5, 1.5, 2.5, 1.5)  # a=prey-growth, b, c, d
+    LVE_args = (1.6, 1.6, 2.6, 1.6)  # a=prey-growth, b, c, d
 
     # --------------------------
     # Simple harmonic oscillator
@@ -552,7 +560,7 @@ def main(
         path_vector.append(jnp.mean(path_len))
 
         # calculate MSE extrapolation error
-        t_end = 60
+        t_end = 50
         sample_t = jnp.linspace(0, t_end, 300)
         ICs = model.sample(sample_t, key=sample_key)[0, :]  # randomly sample for ICs
         exact_y = solve(sample_t, ICs)
@@ -578,8 +586,8 @@ def main(
         # make the plot
         if ((step % plot_every) == 0 and (step > 0)) or step == steps - 1:
             # create some sample times
-            t_end = 70
-            ext = t_final + 10
+            t_end = 50
+            ext = 2 * t_final 
             sample_t = jnp.linspace(0, t_end, 300)
             # latent_sample = model._latent(sample_t, ys[0], key=sample_key)
             # randomly sample for ICs
@@ -751,17 +759,17 @@ main(
     dataset_size=20000,  # number of data n_points 
     batch_size=256,  # batch size
     n_points=150,  # number of points in the ODE data
-    lr=1e-2,  # learning rate
-    steps=301,  # number of training steps
-    plot_every=100,  # plot every n steps
-    save_every=100,  # save the model every n steps
+    lr=5e-3,  # learning rate
+    steps=3001,  # number of training steps
+    plot_every=1000,  # plot every n steps
+    save_every=1000,  # save the model every n steps
     hidden_size=8,  # hidden size of the RNN
-    latent_size=6,  # latent size of the autoencoder
+    latent_size=4,  # latent size of the autoencoder
     width_size=32,  # width of the ODE
     depth=3,  # depth of the ODE
-    alpha=2.5,  # strength of the path penalty
+    alpha=1.5,  # strength of the path penalty
     seed=1992,  # random seed
-    t_final=10,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
+    t_final=15,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
     lossType="mahalanobis",  # {default, mahalanobis, distance}
     func="LVE",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
     figname="LVE_varied_maha_dynamics.png",
