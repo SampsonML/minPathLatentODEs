@@ -257,7 +257,10 @@ class LatentODE(eqx.Module):
 
 def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     ykey, tkey1, tkey2 = jr.split(key, 3)
-    y0 = jr.uniform(ykey, (dataset_size, 2), minval=2, maxval=5)  # ranomize the ICs
+    # NOTE: the initial conditions are randomised for each dataset by min and max, set manually for now
+    IC_min = 1 
+    IC_max = 3
+    y0 = jr.uniform(ykey, (dataset_size, 2), minval=IC_min, maxval=IC_max)  # ranomize the ICs
     t0 = 0
     # randomize the total time series between t_end and 2 * t_end (t_end is user defined)
     t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=0, maxval=t_end)
@@ -767,7 +770,7 @@ main(
     latent_size=4,  # latent size of the autoencoder
     width_size=32,  # width of the ODE
     depth=3,  # depth of the ODE
-    alpha=1.5,  # strength of the path penalty
+    alpha=2.0,  # strength of the path penalty
     seed=1992,  # random seed
     t_final=15,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
     lossType="mahalanobis",  # {default, mahalanobis, distance}
