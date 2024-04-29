@@ -402,6 +402,7 @@ def main(
     steps=30,
     plot_every=10,
     save_every=10,
+    error_every=10,
     hidden_size=8,
     latent_size=2,
     width_size=8,
@@ -608,22 +609,24 @@ def main(
         print(f"Step: {step}, Loss: {value}, Computation time: {end - start}")
         loss_vector.append(value)
 
-        # path length calculation - do this for the paths used in training
-        key_path = jr.split(train_key, 1)[0]
-        key_path = jr.split(key_path, ts_i.shape[0])
-        path_len = jax.vmap(model.pathLength)(ts=ts_i, ys=ys_i, key=key_path)
-        path_vector.append(jnp.mean(path_len))
+        # track the path lengths and errors
+        if step % error_every == 0:
+            # path length calculation do this for the paths used in training
+            key_path = jr.split(train_key, 1)[0]
+            key_path = jr.split(key_path, ts_i.shape[0])
+            path_len = jax.vmap(model.pathLength)(ts=ts_i, ys=ys_i, key=key_path)
+            path_vector.append(jnp.mean(path_len))
 
-        # calculate MSE error
-        mse = test_error(model, ts_test, ys_test, key=sample_key)
-        mse_vec.append(mse)
+            # calculate MSE error
+            mse = test_error(model, ts_test, ys_test, key=sample_key)
+            mse_vec.append(mse)
 
-        # calculate extrapolation error 
-        n_samples = 20
-        param_bounds = [(0.12, 0.125)] # for dho
-        #param_bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5),] # for LVE
-        ext = extrapolation_error(model, n_samples, param_bounds=param_bounds, key=sample_key, t_ext=50)
-        ext_vec.append(ext)
+            # calculate extrapolation error
+            n_samples = 1000
+            param_bounds = [(0.12, 0.12)] # for dho
+            #param_bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5),] # for LVE
+            ext = extrapolation_error(model, n_samples, param_bounds=param_bounds, key=sample_key, t_ext=60)
+            ext_vec.append(ext)
 
         # save the model
         SAVE_DIR = "saved_models"
@@ -804,6 +807,8 @@ def main(
     np.save(filename, mse_vec)
     filename = filename.replace("_mse.npy", "_path.npy")
     np.save(filename, path_vector)
+    filename = filename.replace("_path.npy", "_ext.npy")
+    np.save(filename, ext_vec)
 
 
 # run the code son
@@ -811,20 +816,21 @@ main(
     dataset_size=20000,  # number of data n_points 
     batch_size=256,  # batch size
     n_points=150,  # number of points in the ODE data
-    lr=5e-3,  # learning rate
-    steps=101,  # number of training steps
-    plot_every=25,  # plot every n steps
-    save_every=25,  # save the model every n steps
+    lr=1e-2,  # learning rate
+    steps=1501,  # number of training steps
+    plot_every=250,  # plot every n steps
+    save_every=250,  # save the model every n steps
+    error_every=50,  # calculate the error every n steps
     hidden_size=6,  # hidden size of the RNN
     latent_size=2,  # latent size of the autoencoder
     width_size=16,  # width of the ODE
     depth=2,  # depth of the ODE
-    alpha=0.5,  # strength of the path penalty
+    alpha=1.0,  # strength of the path penalty
     seed=1992,  # random seed
     t_final=10,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
     lossType="mahalanobis",  # {default, mahalanobis, distance}
     func="SHO",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
-    figname="TESTING_dynamics.png",
+    figname="TESTING_dho_maha_dynamics.png",
 )
 
 
