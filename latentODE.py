@@ -258,7 +258,7 @@ class LatentODE(eqx.Module):
 def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     ykey, tkey1, tkey2 = jr.split(key, 3)
     # NOTE: the initial conditions are randomised for each dataset by min and max, set manually for now
-    IC_min = 1 
+    IC_min = 0 
     IC_max = 3
     y0 = jr.uniform(ykey, (dataset_size, 2), minval=IC_min, maxval=IC_max)  # ranomize the ICs
     t0 = 0
@@ -499,6 +499,25 @@ def main(
         dataset_size, key=data_key, func=func, t_end=t_final, n_points=n_points
     )
 
+    # make a test split -- randomly select 10% of the data for testing
+    test_size = int(0.1 * dataset_size)
+    test_idx = jr.choice(data_key, dataset_size, (test_size,), replace=False)
+    train_idx = jnp.setdiff1d(jnp.arange(dataset_size), test_idx)
+    ts_train, ys_train = ts[train_idx], ys[train_idx]
+    ts_test, ys_test = ts[test_idx], ys[test_idx]
+
+    def test_error(model, ts, ys, key, t_ext=50):
+        # calculate MSE extrapolation error
+        key_test = jr.split(key, ys.shape[0])
+        sample_t = jnp.linspace(0, t_ext, 300)
+        latent, _, _ = jax.vmap(model._latent)(ts, ys, key=key_test)
+        sample_y = jax.vmap(model._sample)(ts, latent)
+        sample_y = np.asarray(sample_y)
+        mse_ = (ys - sample_y) ** 2
+        mse_ = jnp.sum(mse_, axis=1)
+        mse = jnp.sum(mse_)
+        return mse
+
     # instantiate the model
     model = LatentODE(
         data_size=ys.shape[-1],
@@ -543,7 +562,7 @@ def main(
     path_vector = []
     mse_vec = []
     for step, (ts_i, ys_i) in zip(
-        range(steps), dataloader((ts, ys), batch_size, key=loader_key)
+        range(steps), dataloader((ts_train, ys_train), batch_size, key=loader_key)
     ):
         start = time.time()
         value, model, opt_state, train_key = make_step(
@@ -563,20 +582,8 @@ def main(
         path_vector.append(jnp.mean(path_len))
 
         # calculate MSE extrapolation error
-        t_end = 50
-        sample_t = jnp.linspace(0, t_end, 300)
-        ICs = model.sample(sample_t, key=sample_key)[0, :]  # randomly sample for ICs
-        exact_y = solve(sample_t, ICs)
-        latent, _, _ = model._latent(sample_t, exact_y, key=sample_key)
-        sample_y = model._sample(sample_t, latent)
-        # sample_y = model.sample(sample_t, key=sample_key)
-        # sample_t = np.asarray(sample_t)
-        sample_y = np.asarray(sample_y)
-        # exact_y = solve(sample_t, sample_y[0, :])
-        mse_ = (exact_y - sample_y) ** 2
-        mse_ = jnp.sum(mse_, axis=1)
-        mse_ = jnp.sum(mse_)
-        mse_vec.append(mse_)
+        mse = test_error(model, ts_test, ys_test, key=sample_key, t_ext=50)
+        mse_vec.append(mse)
 
         # save the model
         SAVE_DIR = "saved_models"
@@ -589,12 +596,10 @@ def main(
         # make the plot
         if ((step % plot_every) == 0 and (step > 0)) or step == steps - 1:
             # create some sample times
-            t_end = 50
+            t_end = 60
             ext = 2 * t_final 
             sample_t = jnp.linspace(0, t_end, 300)
-            # latent_sample = model._latent(sample_t, ys[0], key=sample_key)
             # randomly sample for ICs
-            # sample_y = model.sample(sample_t, key=sample_key)
             ICs = model.sample(sample_t, key=sample_key)[0, :]
             # Generate the exact solution
             exact_y = solve(sample_t, ICs)
@@ -609,7 +614,6 @@ def main(
             sample_latent = np.asarray(sample_latent)
             sample_t = np.asarray(sample_t)
             sample_y = np.asarray(sample_y)
-            # exact_y = solve(sample_t, sample_y[0, :])
             sz = 2
             # plot the trajectories in data space
             ax = axs[0][idx]
@@ -763,19 +767,19 @@ main(
     batch_size=256,  # batch size
     n_points=150,  # number of points in the ODE data
     lr=5e-3,  # learning rate
-    steps=3001,  # number of training steps
-    plot_every=1000,  # plot every n steps
-    save_every=1000,  # save the model every n steps
-    hidden_size=8,  # hidden size of the RNN
-    latent_size=4,  # latent size of the autoencoder
-    width_size=32,  # width of the ODE
-    depth=3,  # depth of the ODE
-    alpha=2.0,  # strength of the path penalty
+    steps=101,  # number of training steps
+    plot_every=25,  # plot every n steps
+    save_every=25,  # save the model every n steps
+    hidden_size=6,  # hidden size of the RNN
+    latent_size=2,  # latent size of the autoencoder
+    width_size=16,  # width of the ODE
+    depth=2,  # depth of the ODE
+    alpha=0.5,  # strength of the path penalty
     seed=1992,  # random seed
-    t_final=15,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
+    t_final=10,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
     lossType="mahalanobis",  # {default, mahalanobis, distance}
-    func="LVE",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
-    figname="LVE_varied_maha_dynamics.png",
+    func="SHO",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
+    figname="TESTING_dynamics.png",
 )
 
 
