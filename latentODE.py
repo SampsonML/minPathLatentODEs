@@ -1,7 +1,7 @@
 # -------------------------------------------------- #
 #       Latent Space Path Minimisation Models        #
-#                   Matt Sampson                     # 
-#                  Peter Melchior                    # 
+#                   Matt Sampson                     #
+#                  Peter Melchior                    #
 #                                                    #
 # Initial LatentODE-RNN architecture modified from   #
 # https://arxiv.org/abs/1907.03907, with jax/diffrax #
@@ -24,6 +24,7 @@ import os
 
 # turn on float 64 - needed to stabalise diffrax for small gradients (see: https://docs.kidger.site/diffrax/further_details/faq/)
 from jax import config
+
 config.update("jax_enable_x64", True)
 
 # Matt's standard plot params - Astro style
@@ -160,7 +161,7 @@ class LatentODE(eqx.Module):
         return reconstruction_loss + variational_loss
 
     @staticmethod
-    def _pathpenaltyloss(self, ts, ys, pred_ys, pred_latent, mean, std, key):
+    def _pathpenaltyloss(self, ys, pred_ys, pred_latent, mean, std):
         # -log p_θ with Gaussian p_θ
         reconstruction_loss = 0.5 * jnp.sum((ys - pred_ys) ** 2)
         # KL(N(mean, std^2) || N(0, 1))
@@ -178,8 +179,7 @@ class LatentODE(eqx.Module):
         return reconstruction_loss + variational_loss + alpha * d_latent
 
     @staticmethod
-    def _distanceloss(self, ts, ys, pred_ys, pred_latent, mean, std, key):
-        # TODO: implement this bypassing the need for the variational loss
+    def _distanceloss(self, ys, pred_ys, pred_latent, std):
         # -log p_θ with Gaussian p_θ
         reconstruction_loss = 0.5 * jnp.sum((ys - pred_ys) ** 2)
         # Mahalanobis distance between latents \sqrt{(x - y)^T \Sigma^{-1} (x - y)}
@@ -192,9 +192,12 @@ class LatentODE(eqx.Module):
         d_latent = jnp.sqrt(jnp.abs(jnp.sum(jnp.dot(diff, Cov) @ diff.T, axis=1)))
         d_latent = jnp.sum(d_latent)
         alpha = self.alpha  # 1 # weighting parameter for distance penalty
-        return reconstruction_loss + alpha * d_latent
+        # penalty for shinking latent space
+        magnitude = 1 / jnp.linalg.norm(std_latent)
+        distance_loss = alpha * d_latent * magnitude
+        return reconstruction_loss + distance_loss
 
-    # Run both encoder and decoder during training.
+    # training routine with suite of 3 loss functions
     def train(self, ts, ys, *, key):
         latent, mean, std = self._latent(ts, ys, key)
         pred_ys = self._sample(ts, latent)
@@ -204,13 +207,10 @@ class LatentODE(eqx.Module):
             return self._loss(ys, pred_ys, mean, std)
         # the classic LatentODE-RNN with the path length penalty
         elif self.lossType == "mahalanobis":
-            return self._pathpenaltyloss(
-                self, ts, ys, pred_ys, pred_latent, mean, std, key
-            )
-        # our new autoencoder (not VAE) LatentODE-RNN with no variational loss TODO: implement this
+            return self._pathpenaltyloss(self, ys, pred_ys, pred_latent, mean, std)
+        # our new autoencoder (not VAE) LatentODE-RNN with no variational loss TODO: test this
         elif self.lossType == "distance":
-            raise ValueError("lossType 'distance' not yet implemented")
-        # return self._distanceloss(self, ts, ys, pred_ys, pred_latent, mean, std, key)
+            return self._distanceloss(self, ys, pred_ys, pred_latent, std)
         else:
             raise ValueError(
                 "lossType must be one of 'default', 'mahalanobis', or 'distance'"
@@ -258,9 +258,11 @@ class LatentODE(eqx.Module):
 def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     ykey, tkey1, tkey2 = jr.split(key, 3)
     # NOTE: the initial conditions are randomised for each dataset by min and max, set manually for now
-    IC_min = 0 
+    IC_min = 1
     IC_max = 3
-    y0 = jr.uniform(ykey, (dataset_size, 2), minval=IC_min, maxval=IC_max)  # ranomize the ICs
+    y0 = jr.uniform(
+        ykey, (dataset_size, 2), minval=IC_min, maxval=IC_max
+    )  # ranomize the ICs
     t0 = 0
     # randomize the total time series between t_end and 2 * t_end (t_end is user defined)
     t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=0, maxval=t_end)
@@ -305,13 +307,11 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
 
     PFHO_args = (1, 1, 1, 3)  # w, b, k, force
 
-
     # --------------------------------------
     # WaterBucket
     # TODO: implement Peters water model
     def Water(t, y, args):
         pass
-
 
     if func == "LVE":
         vector_field = LVE
@@ -344,7 +344,6 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
         )
         return sol.ys
 
-
     # Hard coding some things for now to be sure works as expected
     def solveLVE(ts, y0, key):
         bounds = [
@@ -353,7 +352,10 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
             (1.5, 2.5),
             (0.5, 1.5),
         ]  # same as https://arxiv.org/pdf/2105.03835.pdf
-        args = tuple(jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub) for (lb, ub) in bounds)
+        args = tuple(
+            jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub)
+            for (lb, ub) in bounds
+        )
         args = jnp.squeeze(jnp.asarray(args))
         sol = diffrax.diffeqsolve(
             diffrax.ODETerm(vector_field),
@@ -531,24 +533,26 @@ def main(
         mse = jnp.sum(mse_)
         return mse / ys.shape[0]
 
-    def extrapolation_error(model, n_samples, param_bounds,  key, t_ext=50):
+    def extrapolation_error(model, n_samples, param_bounds, key, t_ext=50):
         # calculate MSE error for extrapolated times
         e_key = jr.split(key, n_samples)
-        args = tuple(jax.random.uniform(key, shape=(n_samples,), minval=lb, maxval=ub) for (lb, ub) in param_bounds)
+        args = tuple(
+            jax.random.uniform(key, shape=(n_samples,), minval=lb, maxval=ub)
+            for (lb, ub) in param_bounds
+        )
         args = jnp.squeeze(jnp.asarray(args)).T
         t0 = jnp.zeros((n_samples,))
         t_e = t_ext * jnp.ones((n_samples,))
         make_ts = lambda t0, t_e: jnp.linspace(t0, t_e, 300)
         sample_t = jax.vmap(make_ts)(t0, t_e)
-        ICs = jax.vmap(model.sample)(sample_t, key=e_key)[:,0,:]
+        ICs = jax.vmap(model.sample)(sample_t, key=e_key)[:, 0, :]
         exact_ys = jax.vmap(solveExtrap)(sample_t, ICs, args)
         latent, _, _ = jax.vmap(model._latent)(sample_t, exact_ys, key=e_key)
         sample_y = jax.vmap(model._sample)(sample_t, latent)
-        sample_y = np.asarray(sample_y)
         mse_ = (exact_ys - sample_y) ** 2
         mse_ = jnp.sum(mse_, axis=1)
         mse = jnp.sum(mse_)
-        return mse / n_samples 
+        return mse / n_samples
 
     # instantiate the model
     model = LatentODE(
@@ -581,12 +585,8 @@ def main(
     opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
 
     # Plot results
-    # num_plots = 1 + (steps - 1) // plot_every
     num_plots = (steps) // plot_every  # don't plot initial untrained model
-    # if ((steps - 1) % plot_every) != 0:
-    #    num_plots += 1
     fig, axs = plt.subplots(rows, num_plots, figsize=(num_plots * 4, rows * 4 - 2))
-
     # plt.subplots_adjust(wspace=0.1, hspace=0.1)
     idx = 0
     f_sz = 16
@@ -622,10 +622,12 @@ def main(
             mse_vec.append(mse)
 
             # calculate extrapolation error
-            n_samples = 1000
-            param_bounds = [(0.12, 0.12)] # for dho
-            #param_bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5),] # for LVE
-            ext = extrapolation_error(model, n_samples, param_bounds=param_bounds, key=sample_key, t_ext=60)
+            n_samples = 500
+            param_bounds = [(0.12, 0.12)]  # for dho
+            # param_bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5),] # for LVE
+            ext = extrapolation_error(
+                model, n_samples, param_bounds=param_bounds, key=sample_key, t_ext=60
+            )
             ext_vec.append(ext)
 
         # save the model
@@ -640,7 +642,7 @@ def main(
         if ((step % plot_every) == 0 and (step > 0)) or step == steps - 1:
             # create some sample times
             t_end = 60
-            ext = 2 * t_final 
+            ext = 2 * t_final
             sample_t = jnp.linspace(0, t_end, 300)
             # randomly sample for ICs
             ICs = model.sample(sample_t, key=sample_key)[0, :]
@@ -782,17 +784,17 @@ def main(
     fig, ax = plt.subplots(1, 3, figsize=(12, 3))
 
     # the MSE
-    ax[0].plot(mse_vec[5:-1], color="black")
+    ax[0].plot(mse_vec[1:-1], color="black")
     ax[0].set_xlabel("step", fontsize=f_sz)
     ax[0].set_ylabel("MSE", fontsize=f_sz)
 
-    # the extrapolation error 
-    ax[1].plot(ext_vec[5:-1], color="black")
+    # the extrapolation error
+    ax[1].plot(ext_vec[1:-1], color="black")
     ax[1].set_xlabel("step", fontsize=f_sz)
     ax[1].set_ylabel("extrapolation error", fontsize=f_sz)
 
     # the interpolation error
-    ax[2].plot(path_vector[5:-1], color="firebrick")
+    ax[2].plot(path_vector[1:-1], color="firebrick")
     ax[2].set_xlabel("step", fontsize=f_sz)
     ax[2].set_ylabel(r"path length", fontsize=f_sz)
 
@@ -813,7 +815,7 @@ def main(
 
 # run the code son
 main(
-    dataset_size=20000,  # number of data n_points 
+    dataset_size=22000,  # number of data n_points
     batch_size=256,  # batch size
     n_points=150,  # number of points in the ODE data
     lr=1e-2,  # learning rate
@@ -825,12 +827,12 @@ main(
     latent_size=2,  # latent size of the autoencoder
     width_size=16,  # width of the ODE
     depth=2,  # depth of the ODE
-    alpha=1.0,  # strength of the path penalty
+    alpha=2.0,  # strength of the path penalty
     seed=1992,  # random seed
     t_final=10,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
-    lossType="mahalanobis",  # {default, mahalanobis, distance}
+    lossType="distance",  # {default, mahalanobis, distance}
     func="SHO",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
-    figname="TESTING_dho_maha_dynamics.png",
+    figname="TESTING_dho_distance_dynamics.png",
 )
 
 
