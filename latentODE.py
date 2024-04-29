@@ -516,7 +516,7 @@ def main(
         mse_ = (ys - sample_y) ** 2
         mse_ = jnp.sum(mse_, axis=1)
         mse = jnp.sum(mse_)
-        return mse
+        return mse / ys.shape[0]
 
     # instantiate the model
     model = LatentODE(
