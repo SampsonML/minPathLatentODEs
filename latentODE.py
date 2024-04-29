@@ -530,20 +530,24 @@ def main(
         mse = jnp.sum(mse_)
         return mse / ys.shape[0]
 
-    def extrapolation_error(model, param_bounds, key, t_ext=50):
+    def extrapolation_error(model, n_samples, param_bounds,  key, t_ext=50):
         # calculate MSE error for extrapolated times
-        args = tuple(jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub) for (lb, ub) in bounds)
-        args = jnp.squeeze(jnp.asarray(args))
-        sample_t = jnp.linspace(0, t_ext, 300)
-        ICs = model.sample(sample_t, key=key)[0, :]
-        exact_ys = solveExtrap(sample_t, ICs, args)
-        latent, _, _ = model._latent(sample_t, exact_ys, key=key)
-        sample_y = model._sample(ts, latent)
+        e_key = jr.split(key, n_samples)
+        args = tuple(jax.random.uniform(key, shape=(n_samples,), minval=lb, maxval=ub) for (lb, ub) in param_bounds)
+        args = jnp.squeeze(jnp.asarray(args)).T
+        t0 = jnp.zeros((n_samples,))
+        t_e = t_ext * jnp.ones((n_samples,))
+        make_ts = lambda t0, t_e: jnp.linspace(t0, t_e, 300)
+        sample_t = jax.vmap(make_ts)(t0, t_e)
+        ICs = jax.vmap(model.sample)(sample_t, key=e_key)[:,0,:]
+        exact_ys = jax.vmap(solveExtrap)(sample_t, ICs, args)
+        latent, _, _ = jax.vmap(model._latent)(sample_t, exact_ys, key=e_key)
+        sample_y = jax.vmap(model._sample)(sample_t, latent)
         sample_y = np.asarray(sample_y)
-        mse_ = (exact_y - sample_y) ** 2
+        mse_ = (exact_ys - sample_y) ** 2
         mse_ = jnp.sum(mse_, axis=1)
         mse = jnp.sum(mse_)
-        return mse 
+        return mse / n_samples 
 
     # instantiate the model
     model = LatentODE(
@@ -603,7 +607,8 @@ def main(
         end = time.time()
         print(f"Step: {step}, Loss: {value}, Computation time: {end - start}")
         loss_vector.append(value)
-        # Path length calculation
+
+        # path length calculation - do this for the paths used in training
         key_path = jr.split(train_key, 1)[0]
         key_path = jr.split(key_path, ts_i.shape[0])
         path_len = jax.vmap(model.pathLength)(ts=ts_i, ys=ys_i, key=key_path)
@@ -615,10 +620,10 @@ def main(
 
         # calculate extrapolation error 
         n_samples = 20
-        bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5)] # same as for training
-        e_key = jr.split(sample_key, n_samples)
-        ext = jax.vmap(extrapolation_error)(model, param_bounds=bounds, key=e_key, t_ext=50)
-        ext_vec.append(jnp.mean(ext))
+        param_bounds = [(0.12, 0.125)] # for dho
+        #param_bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5),] # for LVE
+        ext = extrapolation_error(model, n_samples, param_bounds=param_bounds, key=sample_key, t_ext=50)
+        ext_vec.append(ext)
 
         # save the model
         SAVE_DIR = "saved_models"
