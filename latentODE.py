@@ -491,6 +491,19 @@ def main(
         )
         return sol.ys
 
+    def solveExtrap(ts, y0, args):
+        sol = diffrax.diffeqsolve(
+            diffrax.ODETerm(vector_field),
+            diffrax.Tsit5(),
+            ts[0],
+            ts[-1],
+            0.1,
+            y0,
+            args=args,
+            saveat=diffrax.SaveAt(ts=ts),
+        )
+        return sol.ys
+
     key = jr.PRNGKey(seed)
     data_key, model_key, loader_key, train_key, sample_key = jr.split(key, 5)
 
@@ -506,10 +519,9 @@ def main(
     ts_train, ys_train = ts[train_idx], ys[train_idx]
     ts_test, ys_test = ts[test_idx], ys[test_idx]
 
-    def test_error(model, ts, ys, key, t_ext=50):
-        # calculate MSE extrapolation error
+    def test_error(model, ts, ys, key):
+        # calculate MSE error
         key_test = jr.split(key, ys.shape[0])
-        sample_t = jnp.linspace(0, t_ext, 300)
         latent, _, _ = jax.vmap(model._latent)(ts, ys, key=key_test)
         sample_y = jax.vmap(model._sample)(ts, latent)
         sample_y = np.asarray(sample_y)
@@ -517,6 +529,21 @@ def main(
         mse_ = jnp.sum(mse_, axis=1)
         mse = jnp.sum(mse_)
         return mse / ys.shape[0]
+
+    def extrapolation_error(model, param_bounds, key, t_ext=50):
+        # calculate MSE error for extrapolated times
+        args = tuple(jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub) for (lb, ub) in bounds)
+        args = jnp.squeeze(jnp.asarray(args))
+        sample_t = jnp.linspace(0, t_ext, 300)
+        ICs = model.sample(sample_t, key=key)[0, :]
+        exact_ys = solveExtrap(sample_t, ICs, args)
+        latent, _, _ = model._latent(sample_t, exact_ys, key=key)
+        sample_y = model._sample(ts, latent)
+        sample_y = np.asarray(sample_y)
+        mse_ = (exact_y - sample_y) ** 2
+        mse_ = jnp.sum(mse_, axis=1)
+        mse = jnp.sum(mse_)
+        return mse 
 
     # instantiate the model
     model = LatentODE(
@@ -561,6 +588,7 @@ def main(
     loss_vector = []
     path_vector = []
     mse_vec = []
+    ext_vec = []
     for step, (ts_i, ys_i) in zip(
         range(steps), dataloader((ts_train, ys_train), batch_size, key=loader_key)
     ):
@@ -581,9 +609,16 @@ def main(
         path_len = jax.vmap(model.pathLength)(ts=ts_i, ys=ys_i, key=key_path)
         path_vector.append(jnp.mean(path_len))
 
-        # calculate MSE extrapolation error
-        mse = test_error(model, ts_test, ys_test, key=sample_key, t_ext=50)
+        # calculate MSE error
+        mse = test_error(model, ts_test, ys_test, key=sample_key)
         mse_vec.append(mse)
+
+        # calculate extrapolation error 
+        n_samples = 20
+        bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5)] # same as for training
+        e_key = jr.split(sample_key, n_samples)
+        ext = jax.vmap(extrapolation_error)(model, param_bounds=bounds, key=e_key, t_ext=50)
+        ext_vec.append(jnp.mean(ext))
 
         # save the model
         SAVE_DIR = "saved_models"
@@ -736,17 +771,22 @@ def main(
     plt.savefig(figname2, bbox_inches="tight", dpi=200)
 
     # Plot the loss figure and interpolation error
-    fig, ax = plt.subplots(1, 2, figsize=(8, 3))
+    fig, ax = plt.subplots(1, 3, figsize=(12, 3))
 
-    # the loss
+    # the MSE
     ax[0].plot(mse_vec[5:-1], color="black")
     ax[0].set_xlabel("step", fontsize=f_sz)
     ax[0].set_ylabel("MSE", fontsize=f_sz)
 
-    # the interpolation error
-    ax[1].plot(path_vector[5:-1], color="firebrick")
+    # the extrapolation error 
+    ax[1].plot(ext_vec[5:-1], color="black")
     ax[1].set_xlabel("step", fontsize=f_sz)
-    ax[1].set_ylabel(r"$\langle \sum_i^{n-1} d_{M,i} \rangle$", fontsize=f_sz)
+    ax[1].set_ylabel("extrapolation error", fontsize=f_sz)
+
+    # the interpolation error
+    ax[2].plot(path_vector[5:-1], color="firebrick")
+    ax[2].set_xlabel("step", fontsize=f_sz)
+    ax[2].set_ylabel(r"path length", fontsize=f_sz)
 
     # rename and save the figure
     figname = figname.replace(".png", "_path.png")
