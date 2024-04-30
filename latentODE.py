@@ -527,13 +527,23 @@ def main(
 
     # remove some inner data points so that the inner third of the data is gone
     def cut_mid(ts, ys):
-        gap1 = len(ts) // 3
-        gap2 = 2 * len(ts) // 3
+        #indices = jnp.where((ts < 20) & (ts > 10))
+        gap1 = len(ts) // 4
+        gap2 = gap1 * 3
         ts = jnp.concatenate([ts[0:gap1], ts[gap2:]])
         ys = jnp.concatenate([ys[0:gap1], ys[gap2:]])
         return ts, ys
 
     ts_train, ys_train = jax.vmap(cut_mid)(ts_train, ys_train)
+
+    def add_gaussian_noise(ys, key, noise_level=0.1):
+        noise = jr.normal(key, ys.shape) * noise_level
+        return ys + noise 
+
+    # add some jitter to the data 
+    key_noise = jr.split(train_key, ys_train.shape[0])
+    ys_train = jax.vmap(add_gaussian_noise)(ys_train, key_noise)
+
 
     def test_error(model, ts, ys, key):
         # calculate MSE error
@@ -621,6 +631,22 @@ def main(
         end = time.time()
         print(f"Step: {step}, Loss: {value}, Computation time: {end - start}")
         loss_vector.append(value)
+
+        # NOTE: Just for one off visualisation purposes
+        if step ==0:
+            fig2 = plt.figure(figsize=(5, 5))
+            plt.subplots_adjust(wspace=0.0, hspace=0.0)
+            plt.subplot(2,1,1)
+            plt.plot(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='navy', alpha=0.15)
+            #plt.xlabel("time (s)", fontsize=16)
+            plt.ylabel("position", fontsize=16)
+
+            plt.subplot(2,1,2)
+            plt.plot(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='navy', alpha=0.15)
+            plt.xlabel("time (s)", fontsize=16)
+            plt.ylabel("velocity", fontsize=16)
+            plt.savefig("training_data.pdf", dpi=300, bbox_inches="tight")
+
 
         # track the path lengths and errors
         if step % error_every == 0:
@@ -845,22 +871,22 @@ def main(
 main(
     dataset_size=22000,  # number of data n_points
     batch_size=256,  # batch size
-    n_points=150,  # number of points in the ODE data
+    n_points=100,  # number of points in the ODE data
     lr=1e-2,  # learning rate
-    steps=9001,  # number of training steps
-    plot_every=3000,  # plot every n steps
-    save_every=3000,  # save the model every n steps
+    steps=11,  # number of training steps
+    plot_every=5,  # plot every n steps
+    save_every=5,  # save the model every n steps
     error_every=50,  # calculate the error every n steps
     hidden_size=6,  # hidden size of the RNN
     latent_size=2,  # latent size of the autoencoder
     width_size=16,  # width of the ODE
     depth=2,  # depth of the ODE
-    alpha=2.0,  # strength of the path penalty
+    alpha=0.5,  # strength of the path penalty
     seed=1992,  # random seed
     t_final=30,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
     lossType="mahalanobis",  # {default, mahalanobis, distance}
     func="SHO",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
-    figname="gap_steps_a2_9000_distance_dynamics.png",
+    figname="TESTING_gap_steps_distance_dynamics.png",
 )
 
 
