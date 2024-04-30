@@ -152,6 +152,7 @@ class LatentODE(eqx.Module):
         )
         return jax.vmap(self.hidden_to_data)(sol.ys)
 
+    # Standard LatentODE-RNN loss as in https://arxiv.org/abs/1907.03907
     @staticmethod
     def _loss(ys, pred_ys, mean, std):
         # -log p_θ with Gaussian p_θ
@@ -160,6 +161,7 @@ class LatentODE(eqx.Module):
         variational_loss = 0.5 * jnp.sum(mean**2 + std**2 - 2 * jnp.log(std) - 1)
         return reconstruction_loss + variational_loss
 
+    # Standard loss plus path penanlty
     @staticmethod
     def _pathpenaltyloss(self, ys, pred_ys, pred_latent, mean, std):
         # -log p_θ with Gaussian p_θ
@@ -175,9 +177,10 @@ class LatentODE(eqx.Module):
         Cov = jnp.linalg.inv(Cov)
         d_latent = jnp.sqrt(jnp.abs(jnp.sum(jnp.dot(diff, Cov) @ diff.T, axis=1)))
         d_latent = jnp.sum(d_latent)
-        alpha = self.alpha  # 1 # weighting parameter for distance penalty
+        alpha = self.alpha  # weighting parameter for distance penalty
         return reconstruction_loss + variational_loss + alpha * d_latent
 
+    # New loss function, no variational loss
     @staticmethod
     def _distanceloss(self, ys, pred_ys, pred_latent, std):
         # -log p_θ with Gaussian p_θ
@@ -191,7 +194,7 @@ class LatentODE(eqx.Module):
         Cov = jnp.linalg.inv(Cov)
         d_latent = jnp.sqrt(jnp.abs(jnp.sum(jnp.dot(diff, Cov) @ diff.T, axis=1)))
         d_latent = jnp.sum(d_latent)
-        alpha = self.alpha  # 1 # weighting parameter for distance penalty
+        alpha = self.alpha  # weighting parameter for distance penalty
         # penalty for shinking latent space
         magnitude = 1 / jnp.linalg.norm(std_latent)
         distance_loss = alpha * d_latent * magnitude
@@ -258,14 +261,14 @@ class LatentODE(eqx.Module):
 def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     ykey, tkey1, tkey2 = jr.split(key, 3)
     # NOTE: the initial conditions are randomised for each dataset by min and max, set manually for now
-    IC_min = 1
+    IC_min = 0
     IC_max = 3
     y0 = jr.uniform(
         ykey, (dataset_size, 2), minval=IC_min, maxval=IC_max
     )  # ranomize the ICs
     t0 = 0
     # randomize the total time series between t_end and 2 * t_end (t_end is user defined)
-    t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=0, maxval=t_end)
+    t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=1, maxval=1)
     ts = jr.uniform(tkey2, (dataset_size, n_points)) * (t1[:, None] - t0) + t0
     ts = jnp.sort(ts)
     dt0 = 0.1
@@ -460,7 +463,7 @@ def main(
     if func == "LVE":
         vector_field = LVE
         args = LVE_args
-        rows = 3
+        rows = 4
         TITLE = "Latent ODE Model: Lotka-Volterra Equations"
         LAB_X = "prey"
         LAB_Y = "predator"
@@ -521,6 +524,16 @@ def main(
     train_idx = jnp.setdiff1d(jnp.arange(dataset_size), test_idx)
     ts_train, ys_train = ts[train_idx], ys[train_idx]
     ts_test, ys_test = ts[test_idx], ys[test_idx]
+
+    # remove some inner data points so that the inner third of the data is gone
+    def cut_mid(ts, ys):
+        gap1 = len(ts) // 3
+        gap2 = 2 * len(ts) // 3
+        ts = jnp.concatenate([ts[0:gap1], ts[gap2:]])
+        ys = jnp.concatenate([ys[0:gap1], ys[gap2:]])
+        return ts, ys
+
+    ts_train, ys_train = jax.vmap(cut_mid)(ts_train, ys_train)
 
     def test_error(model, ts, ys, key):
         # calculate MSE error
@@ -640,9 +653,17 @@ def main(
 
         # make the plot
         if ((step % plot_every) == 0 and (step > 0)) or step == steps - 1:
+            # colour pallete
+            c1 = "black"  # line 1
+            c2 = "firebrick"  # line 2
+            c3 = "coral"  # shading 1
+            c4 = "black"  # shading 2
+
             # create some sample times
             t_end = 60
-            ext = 2 * t_final
+            ext = 30  # Change this back 2 * t_final
+            gap_start = 10
+            gap_end = 20
             sample_t = jnp.linspace(0, t_end, 300)
             # randomly sample for ICs
             ICs = model.sample(sample_t, key=sample_key)[0, :]
@@ -663,31 +684,38 @@ def main(
             # plot the trajectories in data space
             ax = axs[0][idx]
             if idx == 0:
-                ax.plot(sample_t, sample_y[:, 0], color="firebrick", label=LAB_X)
+                ax.plot(sample_t, sample_y[:, 0], color=c1, label=LAB_X, zorder=6)
             if idx == 0:
-                ax.plot(sample_t, sample_y[:, 1], color="steelblue", label=LAB_Y)
+                ax.plot(sample_t, sample_y[:, 1], color=c2, label=LAB_Y, zorder=6)
             if idx == 0:
-                ax.scatter(-10, 2, color="black", s=sz, label="exact")
-            ax.scatter(sample_t, exact_y[:, 0], color="firebrick", s=sz)
-            ax.scatter(sample_t, exact_y[:, 1], color="steelblue", s=sz)
+                ax.scatter(-10, 2, color="black", s=sz, label="exact", zorder=5)
+            ax.scatter(sample_t, exact_y[:, 0], color=c1, s=sz, zorder=5)
+            ax.scatter(sample_t, exact_y[:, 1], color=c2, s=sz, zorder=5)
             ax.set_title(f"training step: {step}", fontsize=f_sz)
             ax.set_xlabel("time (s)", fontsize=f_sz)
             if idx == 0:
-                ax.axvspan(ext, t_end + 2, alpha=0.2, color="coral")
+                ax.axvspan(ext, t_end + 2, alpha=0.25, color=c3, zorder=1)
+                ax.axvspan(gap_start, gap_end, alpha=0.25, color=c4, zorder=0)
             ax.set_xlim([0, t_end])
             if idx == 0:
                 ax.set_ylabel("arb", fontsize=f_sz)
                 ax.legend()
             else:
-                ax.plot(sample_t, sample_y[:, 0], color="firebrick")
-                ax.plot(sample_t, sample_y[:, 1], color="steelblue")
+                ax.plot(sample_t, sample_y[:, 0], color=c1, zorder=6)
+                ax.plot(sample_t, sample_y[:, 1], color=c2, zorder=6)
+                ax.axvspan(ext, t_end + 2, alpha=0.25, color=c3, label="extrapolation")
                 ax.axvspan(
-                    ext, t_end + 2, alpha=0.2, color="coral", label="extrapolation"
+                    gap_start,
+                    gap_end,
+                    alpha=0.25,
+                    color=c4,
+                    zorder=0,
+                    label="missing data",
                 )
                 ax.legend()
 
             # the phase space plot
-            ax = axs[1][idx]
+            ax = axs[2][idx]
             sample_y_in = sample_y[sample_t < ext]
             sample_y_out = sample_y[sample_t >= ext]
             exact_y_in = exact_y[sample_t < ext]
@@ -718,38 +746,36 @@ def main(
                 ax.legend()
 
             # now the latent space plot
-            ax = axs[2][idx]
+            ax = axs[3][idx]
             cmap = plt.get_cmap("plasma")
             for i in range(sample_latent.shape[1]):
                 name = f"latent{i}"
                 color = cmap(i / sample_latent.shape[1])
                 ax.plot(sample_t, sample_latent[:, i], color=color, label=name)
             ax.set_xlabel("time (s)", fontsize=f_sz)
-            ax.axvspan(ext, t_end + 2, alpha=0.2, color="coral")
+            ax.axvspan(ext, t_end + 2, alpha=0.25, color="coral")
             ax.set_xlim([0, t_end])
             if idx == 0:
                 ax.set_ylabel("arb", fontsize=f_sz)
                 ax.legend()
 
             if rows > 3:
-                ax = axs[3][idx]
-                latent_in = sample_latent[sample_t < ext]
-                latent_out = sample_latent[sample_t >= ext]
-                ax.plot(
-                    latent_in[:, 0],
-                    latent_in[:, 1],
-                    color="darkgray",
-                    label="LatentODE",
+                ax = axs[1][idx]
+                error = (sample_y - exact_y) ** 2
+                error = np.sum(error, axis=1)
+                ax.plot(sample_t, error, color="black")
+                ax.axvspan(ext, t_end + 2, alpha=0.25, color=c3, label="extrapolation")
+                ax.axvspan(
+                    gap_start,
+                    gap_end,
+                    alpha=0.25,
+                    color=c4,
+                    zorder=0,
+                    label="missing data",
                 )
-                ax.plot(
-                    latent_out[:, 0],
-                    latent_out[:, 1],
-                    color="coral",
-                    label="ODE: extrapolated",
-                )
-                ax.set_xlabel("latent 0", fontsize=f_sz)
-                if idx == 0:
-                    ax.set_ylabel("latent 1", fontsize=f_sz)
+                ax.set_xlabel("time (s)", fontsize=f_sz)
+                if idx ==0: ax.set_ylabel("MSE", fontsize=f_sz)
+                ax.set_xlim([0, t_end])
             idx += 1
 
     # plt.suptitle(TITLE, y=0.935, fontsize=20)
@@ -812,6 +838,8 @@ def main(
     filename = filename.replace("_path.npy", "_ext.npy")
     np.save(filename, ext_vec)
 
+    # make U-maps of latent parameters
+
 
 # run the code son
 main(
@@ -819,9 +847,9 @@ main(
     batch_size=256,  # batch size
     n_points=150,  # number of points in the ODE data
     lr=1e-2,  # learning rate
-    steps=1501,  # number of training steps
-    plot_every=250,  # plot every n steps
-    save_every=250,  # save the model every n steps
+    steps=9001,  # number of training steps
+    plot_every=3000,  # plot every n steps
+    save_every=3000,  # save the model every n steps
     error_every=50,  # calculate the error every n steps
     hidden_size=6,  # hidden size of the RNN
     latent_size=2,  # latent size of the autoencoder
@@ -829,10 +857,10 @@ main(
     depth=2,  # depth of the ODE
     alpha=2.0,  # strength of the path penalty
     seed=1992,  # random seed
-    t_final=10,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
-    lossType="distance",  # {default, mahalanobis, distance}
+    t_final=30,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
+    lossType="mahalanobis",  # {default, mahalanobis, distance}
     func="SHO",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
-    figname="TESTING_dho_distance_dynamics.png",
+    figname="gap_steps_a2_9000_distance_dynamics.png",
 )
 
 
