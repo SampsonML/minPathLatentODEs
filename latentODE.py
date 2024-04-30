@@ -633,19 +633,20 @@ def main(
         loss_vector.append(value)
 
         # NOTE: Just for one off visualisation purposes
-        if step ==0:
-            fig2 = plt.figure(figsize=(5, 5))
-            plt.subplots_adjust(wspace=0.0, hspace=0.0)
-            plt.subplot(2,1,1)
-            plt.plot(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='navy', alpha=0.15)
-            #plt.xlabel("time (s)", fontsize=16)
-            plt.ylabel("position", fontsize=16)
+        #if step ==0:
+        #    fig2 = plt.figure(figsize=(5, 5))
+        #    plt.subplots_adjust(wspace=0.0, hspace=0.0)
+        #    plt.subplot(2,1,1)
+        #    plt.plot(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='navy', alpha=0.15, zorder=0)
+        #    plt.scatter(ts_i[10,:], ys_i[10,:,0], lw=1, c='firebrick', alpha=1, s=4, zorder=5)
+        #    plt.ylabel("position", fontsize=16)
 
-            plt.subplot(2,1,2)
-            plt.plot(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='navy', alpha=0.15)
-            plt.xlabel("time (s)", fontsize=16)
-            plt.ylabel("velocity", fontsize=16)
-            plt.savefig("training_data.pdf", dpi=300, bbox_inches="tight")
+        #    plt.subplot(2,1,2)
+        #    plt.plot(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='navy', alpha=0.15,zorder=0)
+        #    plt.scatter(ts_i[10,:], ys_i[10,:,1], lw=1, c='firebrick', alpha=1, s=4, zorder=5)
+        #    plt.xlabel("time (s)", fontsize=16)
+        #    plt.ylabel("velocity", fontsize=16)
+        #    plt.savefig("training_data.pdf", dpi=300, bbox_inches="tight")
 
 
         # track the path lengths and errors
