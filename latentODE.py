@@ -268,7 +268,7 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     )  # ranomize the ICs
     t0 = 0
     # randomize the total time series between t_end and 2 * t_end (t_end is user defined)
-    t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=1, maxval=t_end)
+    t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=1, maxval=1)
     ts = jr.uniform(tkey2, (dataset_size, n_points)) * (t1[:, None] - t0) + t0
     ts = jnp.sort(ts)
     dt0 = 0.1
@@ -499,7 +499,7 @@ def main(
         ys = jnp.concatenate([ys[0:gap1], ys[gap2:]])
         return ts, ys
 
-    # ts_train, ys_train = jax.vmap(cut_mid)(ts_train, ys_train)
+    ts_train, ys_train = jax.vmap(cut_mid)(ts_train, ys_train)
 
     def add_gaussian_noise(ys, key, noise_level=0.1):
         noise = jr.normal(key, ys.shape) * noise_level
@@ -656,8 +656,6 @@ def main(
             + str(width_size)
             + "_d"
             + str(depth)
-            + "_a"
-            + str(alpha)
             + "_lossType"
             + lossType
         )
@@ -864,17 +862,17 @@ main(
     train=True,
     dataset_size=22000,  # number of data n_points
     batch_size=256,  # batch size
-    n_points=150,  # number of points in the ODE data
+    n_points=80,  # number of points in the ODE data
     lr=1e-2,  # learning rate
-    steps=31,  # number of training steps
-    plot_every=10,  # plot every n steps
-    save_every=10,  # save the model every n steps
-    error_every=10,  # calculate the error every n steps
+    steps=1001,  # number of training steps
+    plot_every=250,  # plot every n steps
+    save_every=250,  # save the model every n steps
+    error_every=50,  # calculate the error every n steps
     hidden_size=6,  # hidden size of the RNN
     latent_size=2,  # latent size of the autoencoder
     width_size=24,  # width of the ODE
     depth=2,  # depth of the ODE
-    alpha=0.25,  # strength of the path penalty
+    alpha=5,  # strength of the path penalty
     seed=1992,  # random seed
     t_final=30,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
     lossType="mahalanobis",  # {default, mahalanobis, distance}
@@ -896,6 +894,7 @@ main(
 # lr = 1e2
 # theta = 0.12
 # steps = 2501
+# IC (1 -> 4) (1 -> 4)
 # ---------------------------------------- #
 
 
