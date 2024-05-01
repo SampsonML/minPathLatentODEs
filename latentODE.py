@@ -646,17 +646,17 @@ def main(
         # save the model
         SAVE_DIR = "saved_models"
         save_suffix = (
-            "npoints_"
+            "_npoints_"
             + str(n_points)
-            + "hidden_sz"
+            + "_hsz"
             + str(hidden_size)
-            + "_latent_sz"
+            + "_lsz"
             + str(latent_size)
-            + "_width"
+            + "_w"
             + str(width_size)
-            + "_depth"
+            + "_d"
             + str(depth)
-            + "_alpha"
+            + "_a"
             + str(alpha)
             + "_lossType"
             + lossType
@@ -861,7 +861,7 @@ def main(
 
 # run the code son
 main(
-    train=False,
+    train=True,
     dataset_size=22000,  # number of data n_points
     batch_size=256,  # batch size
     n_points=150,  # number of points in the ODE data
