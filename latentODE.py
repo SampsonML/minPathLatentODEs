@@ -261,14 +261,14 @@ class LatentODE(eqx.Module):
 def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     ykey, tkey1, tkey2 = jr.split(key, 3)
     # NOTE: the initial conditions are randomised for each dataset by min and max, set manually for now
-    IC_min = 0
-    IC_max = 3
+    IC_min = 1
+    IC_max = 4
     y0 = jr.uniform(
         ykey, (dataset_size, 2), minval=IC_min, maxval=IC_max
     )  # ranomize the ICs
     t0 = 0
     # randomize the total time series between t_end and 2 * t_end (t_end is user defined)
-    t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=1, maxval=1)
+    t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=1, maxval=t_end)
     ts = jr.uniform(tkey2, (dataset_size, n_points)) * (t1[:, None] - t0) + t0
     ts = jnp.sort(ts)
     dt0 = 0.1
@@ -299,18 +299,6 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     SHO_args = 0.12  # theta
 
     # --------------------------------------
-    # Periodically forced hamonic oscillator
-    def PFHO(t, y, args):
-        y1, y2 = y
-        w, b, k, force = args
-        dy1 = y2
-        dy2 = force * jnp.cos(w * t) - b * y2 - k * y1
-        d_y = jnp.array([dy1, dy2])
-        return d_y
-
-    PFHO_args = (1, 1, 1, 3)  # w, b, k, force
-
-    # --------------------------------------
     # WaterBucket
     # TODO: implement Peters water model
     def Water(t, y, args):
@@ -328,11 +316,8 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     elif func == "SHO":
         vector_field = SHO
         args = SHO_args  # Fixed damping rate
-    elif func == "PFHO":
-        vector_field = PFHO
-        args = PFHO_args  # fixed for now, not using this test
     else:
-        raise ValueError("func must be one of 'LVE', 'SHO', 'PFHO'")
+        raise ValueError("func must be one of 'LVE', 'SHO', 'water'")
 
     def solve(ts, y0):
         sol = diffrax.diffeqsolve(
@@ -350,10 +335,10 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     # Hard coding some things for now to be sure works as expected
     def solveLVE(ts, y0, key):
         bounds = [
-            (0.5, 1.5),
-            (0.5, 1.5),
-            (1.5, 2.5),
-            (0.5, 1.5),
+            (0.75, 1.25),
+            (0.75, 1.25),
+            (1.75, 2.25),
+            (0.75, 1.25),
         ]  # same as https://arxiv.org/pdf/2105.03835.pdf
         args = tuple(
             jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub)
@@ -400,6 +385,7 @@ def dataloader(arrays, batch_size, *, key):
 
 
 def main(
+    train=True,
     dataset_size=20000,
     batch_size=256,
     n_points=100,
@@ -416,8 +402,10 @@ def main(
     seed=1992,
     t_final=20,
     lossType="default",
-    func="PFHO",
+    func="SHO",
     figname="latent_ODE.png",
+    save_name="blank",
+    MODEL_NAME="blank",
 ):
     # Defining vector fields again for use in visualisation
     # ------------------------
@@ -444,22 +432,6 @@ def main(
 
     SHO_args = 0.12  # theta
 
-    # --------------------------------------
-    # Periodically forced hamonic oscillator
-    def PFHO(t, y, args):
-        y1, y2 = y
-        w, b, k, force = args
-        dy1 = y2
-        dy2 = force * jnp.cos(w * t) - b * y2 - k * y1
-        d_y = jnp.array([dy1, dy2])
-        return d_y
-
-    PFHO_args = (1, 1, 1, 3)  # w, b, k, force
-
-    def PO(t, y, args):
-        dy = jnp.sin(t)
-        return dy
-
     if func == "LVE":
         vector_field = LVE
         args = LVE_args
@@ -474,15 +446,8 @@ def main(
         TITLE = "Latent ODE Model: Simple Harmonic Oscillator"
         LAB_X = "position"
         LAB_Y = "velocity"
-    elif func == "PFHO":
-        vector_field = PFHO
-        args = PFHO_args
-        rows = 3
-        TITLE = "Latent ODE Model: Periodically Forced Harmonic Oscillator"
-        LAB_X = "position"
-        LAB_Y = "velocity"
     else:
-        raise ValueError("func must be one of 'LVE', 'SHO', 'PFHO'")
+        raise ValueError("func must be one of 'LVE', 'SHO', 'water'")
 
     def solve(ts, y0):
         sol = diffrax.diffeqsolve(
@@ -527,23 +492,22 @@ def main(
 
     # remove some inner data points so that the inner third of the data is gone
     def cut_mid(ts, ys):
-        #indices = jnp.where((ts < 20) & (ts > 10))
-        gap1 = len(ts) // 4
-        gap2 = gap1 * 3
+        # indices = jnp.where((ts < 20) & (ts > 10))
+        gap1 = int(len(ts) / 3.5)
+        gap2 = int(gap1 * 2.5)
         ts = jnp.concatenate([ts[0:gap1], ts[gap2:]])
         ys = jnp.concatenate([ys[0:gap1], ys[gap2:]])
         return ts, ys
 
-    ts_train, ys_train = jax.vmap(cut_mid)(ts_train, ys_train)
+    # ts_train, ys_train = jax.vmap(cut_mid)(ts_train, ys_train)
 
     def add_gaussian_noise(ys, key, noise_level=0.1):
         noise = jr.normal(key, ys.shape) * noise_level
-        return ys + noise 
+        return ys + noise
 
-    # add some jitter to the data 
+    # add some jitter to the data
     key_noise = jr.split(train_key, ys_train.shape[0])
     ys_train = jax.vmap(add_gaussian_noise)(ys_train, key_noise)
-
 
     def test_error(model, ts, ys, key):
         # calculate MSE error
@@ -620,34 +584,43 @@ def main(
     for step, (ts_i, ys_i) in zip(
         range(steps), dataloader((ts_train, ys_train), batch_size, key=loader_key)
     ):
-        start = time.time()
-        value, model, opt_state, train_key = make_step(
-            model,
-            opt_state,
-            ts_i,
-            ys_i,
-            train_key,
-        )
-        end = time.time()
-        print(f"Step: {step}, Loss: {value}, Computation time: {end - start}")
-        loss_vector.append(value)
+        if train:
+            start = time.time()
+            value, model, opt_state, train_key = make_step(
+                model,
+                opt_state,
+                ts_i,
+                ys_i,
+                train_key,
+            )
+            end = time.time()
+            print(f"Step: {step}, Loss: {value}, Computation time: {end - start}")
+            loss_vector.append(value)
+
+        # load the model instead here
+        else:
+            modelName = "saved_models/" + MODEL_NAME
+            model = eqx.tree_deserialise_leaves(modelName, model)
 
         # NOTE: Just for one off visualisation purposes
-        #if step ==0:
-        #    fig2 = plt.figure(figsize=(5, 5))
-        #    plt.subplots_adjust(wspace=0.0, hspace=0.0)
-        #    plt.subplot(2,1,1)
-        #    plt.plot(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='navy', alpha=0.15, zorder=0)
-        #    plt.scatter(ts_i[10,:], ys_i[10,:,0], lw=1, c='firebrick', alpha=1, s=4, zorder=5)
-        #    plt.ylabel("position", fontsize=16)
-
-        #    plt.subplot(2,1,2)
-        #    plt.plot(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='navy', alpha=0.15,zorder=0)
-        #    plt.scatter(ts_i[10,:], ys_i[10,:,1], lw=1, c='firebrick', alpha=1, s=4, zorder=5)
+        # if step ==0:
+        #    fig2 = plt.figure(figsize=(10, 2))
+        #    plt.subplots_adjust(wspace=0.2, hspace=0.2)
+        #    plt.subplot(1,2,1)
+        # plt.plot(ts_i[20,:], ys_i[20,:,0], lw=1, c='darkorange', alpha=0.15, zorder=0)
+        #    plt.scatter(ts_i[30,:], ys_i[30,:,0], lw=0.1, c='darkorange',edgecolor='black',alpha=1, s=15, zorder=5)
+        #    plt.scatter(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='black', alpha=0.10, s=4,zorder=0)
+        #    plt.ylabel("pop (prey)", fontsize=16)
         #    plt.xlabel("time (s)", fontsize=16)
-        #    plt.ylabel("velocity", fontsize=16)
-        #    plt.savefig("training_data.pdf", dpi=300, bbox_inches="tight")
 
+        #    plt.subplot(1,2,2)
+        # plt.plot(ts_i[0:150,:], ys_i[0:150,:,1], lw=1, c='navy', alpha=0.15,zorder=0)
+        # plt.plot(ts_i[20,:], ys_i[20,:,1], lw=1, c='darkorange', alpha=0.15, zorder=0)
+        #    plt.scatter(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='black', alpha=0.1, s=4,zorder=0)
+        #    plt.scatter(ts_i[30,:], ys_i[30,:,1], lw=0.1, c='darkorange', edgecolor='black',alpha=1, s=15, zorder=5)
+        #    plt.xlabel("time (s)", fontsize=16)
+        #    plt.ylabel("pop (pred)", fontsize=16)
+        #    plt.savefig("training_data.pdf", dpi=300, bbox_inches="tight")
 
         # track the path lengths and errors
         if step % error_every == 0:
@@ -662,7 +635,7 @@ def main(
             mse_vec.append(mse)
 
             # calculate extrapolation error
-            n_samples = 500
+            n_samples = 256
             param_bounds = [(0.12, 0.12)]  # for dho
             # param_bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5),] # for LVE
             ext = extrapolation_error(
@@ -675,7 +648,7 @@ def main(
         if not os.path.exists(SAVE_DIR):
             os.makedirs(SAVE_DIR)
         if (step % save_every) == 0 or step == steps - 1:
-            fn = SAVE_DIR + "/latentODE" + str(step) + ".eqx"
+            fn = SAVE_DIR + "/" + save_name + "step_" + str(step) + ".eqx"
             eqx.tree_serialise_leaves(fn, model)
 
         # make the plot
@@ -801,7 +774,8 @@ def main(
                     label="missing data",
                 )
                 ax.set_xlabel("time (s)", fontsize=f_sz)
-                if idx ==0: ax.set_ylabel("MSE", fontsize=f_sz)
+                if idx == 0:
+                    ax.set_ylabel("MSE", fontsize=f_sz)
                 ax.set_xlim([0, t_end])
             idx += 1
 
@@ -810,84 +784,88 @@ def main(
     figname2 = figname.replace(".png", ".pdf")
     plt.savefig(figname2, bbox_inches="tight", dpi=200)
 
-    # Plot the loss figure and interpolation error
-    fig, ax = plt.subplots(1, 2, figsize=(8, 3))
+    if train:
+        # Plot the loss figure and interpolation error
+        fig, ax = plt.subplots(1, 2, figsize=(8, 3))
 
-    # the loss
-    ax[0].plot(loss_vector, color="black")
-    ax[0].set_xlabel("step", fontsize=f_sz)
-    ax[0].set_ylabel("loss", fontsize=f_sz)
+        # the loss
+        ax[0].plot(loss_vector, color="black")
+        ax[0].set_xlabel("step", fontsize=f_sz)
+        ax[0].set_ylabel("loss", fontsize=f_sz)
 
-    # the interpolation error
-    error = (sample_y - exact_y) ** 2
-    error = np.sum(error, axis=1)
-    ax[1].plot(sample_t, error, color="gray")
-    ax[1].axvspan(ext, t_end + 2, alpha=0.2, color="coral")
-    ax[1].set_xlabel("time", fontsize=f_sz)
-    ax[1].set_ylabel("square error", fontsize=f_sz)
-    ax[1].set_xlim([0, t_end])
+        # the interpolation error
+        error = (sample_y - exact_y) ** 2
+        error = np.sum(error, axis=1)
+        ax[1].plot(sample_t, error, color="gray")
+        ax[1].axvspan(ext, t_end + 2, alpha=0.2, color="coral")
+        ax[1].set_xlabel("time", fontsize=f_sz)
+        ax[1].set_ylabel("square error", fontsize=f_sz)
+        ax[1].set_xlim([0, t_end])
 
-    # rename and save the figure
-    figname = figname.replace(".png", "_loss.png")
-    plt.savefig(figname, bbox_inches="tight", dpi=200)
-    figname2 = figname.replace(".png", ".pdf")
-    plt.savefig(figname2, bbox_inches="tight", dpi=200)
+        # rename and save the figure
+        figname = figname.replace(".png", "_loss.png")
+        plt.savefig(figname, bbox_inches="tight", dpi=200)
+        figname2 = figname.replace(".png", ".pdf")
+        plt.savefig(figname2, bbox_inches="tight", dpi=200)
 
-    # Plot the loss figure and interpolation error
-    fig, ax = plt.subplots(1, 3, figsize=(12, 3))
+        # Plot the interpolation and extrapolation error and path length
+        fig, ax = plt.subplots(1, 3, figsize=(12, 3))
 
-    # the MSE
-    ax[0].plot(mse_vec[1:-1], color="black")
-    ax[0].set_xlabel("step", fontsize=f_sz)
-    ax[0].set_ylabel("MSE", fontsize=f_sz)
+        # the interpolation error
+        ax[0].plot(mse_vec[1:-1], color="black")
+        ax[0].set_xlabel("step", fontsize=f_sz)
+        ax[0].set_ylabel("MSE", fontsize=f_sz)
 
-    # the extrapolation error
-    ax[1].plot(ext_vec[1:-1], color="black")
-    ax[1].set_xlabel("step", fontsize=f_sz)
-    ax[1].set_ylabel("extrapolation error", fontsize=f_sz)
+        # the extrapolation error
+        ax[1].plot(ext_vec[1:-1], color="black")
+        ax[1].set_xlabel("step", fontsize=f_sz)
+        ax[1].set_ylabel("extrapolation error", fontsize=f_sz)
 
-    # the interpolation error
-    ax[2].plot(path_vector[1:-1], color="firebrick")
-    ax[2].set_xlabel("step", fontsize=f_sz)
-    ax[2].set_ylabel(r"path length", fontsize=f_sz)
+        # the path length
+        ax[2].plot(path_vector[1:-1], color="firebrick")
+        ax[2].set_xlabel("step", fontsize=f_sz)
+        ax[2].set_ylabel(r"path length", fontsize=f_sz)
 
-    # rename and save the figure
-    figname = figname.replace(".png", "_path.png")
-    plt.savefig(figname, bbox_inches="tight", dpi=200)
-    figname2 = figname.replace(".png", ".pdf")
-    plt.savefig(figname2, bbox_inches="tight", dpi=200)
+        # rename and save the figure
+        figname = figname.replace(".png", "_path.png")
+        plt.savefig(figname, bbox_inches="tight", dpi=200)
+        figname2 = figname.replace(".png", ".pdf")
+        plt.savefig(figname2, bbox_inches="tight", dpi=200)
 
-    # save the vectors to compare
-    filename = figname2.replace(".pdf", "_mse.npy")
-    np.save(filename, mse_vec)
-    filename = filename.replace("_mse.npy", "_path.npy")
-    np.save(filename, path_vector)
-    filename = filename.replace("_path.npy", "_ext.npy")
-    np.save(filename, ext_vec)
+        # save the vectors to compare
+        filename = figname2.replace(".pdf", "_mse.npy")
+        np.save(filename, mse_vec)
+        filename = filename.replace("_mse.npy", "_path.npy")
+        np.save(filename, path_vector)
+        filename = filename.replace("_path.npy", "_ext.npy")
+        np.save(filename, ext_vec)
 
     # make U-maps of latent parameters
 
 
 # run the code son
 main(
+    train=False,
     dataset_size=22000,  # number of data n_points
     batch_size=256,  # batch size
-    n_points=100,  # number of points in the ODE data
+    n_points=150,  # number of points in the ODE data
     lr=1e-2,  # learning rate
-    steps=11,  # number of training steps
-    plot_every=5,  # plot every n steps
-    save_every=5,  # save the model every n steps
-    error_every=50,  # calculate the error every n steps
+    steps=31,  # number of training steps
+    plot_every=10,  # plot every n steps
+    save_every=10,  # save the model every n steps
+    error_every=10,  # calculate the error every n steps
     hidden_size=6,  # hidden size of the RNN
     latent_size=2,  # latent size of the autoencoder
-    width_size=16,  # width of the ODE
+    width_size=24,  # width of the ODE
     depth=2,  # depth of the ODE
-    alpha=0.5,  # strength of the path penalty
+    alpha=0.25,  # strength of the path penalty
     seed=1992,  # random seed
     t_final=30,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
     lossType="mahalanobis",  # {default, mahalanobis, distance}
     func="SHO",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
-    figname="TESTING_gap_steps_distance_dynamics.png",
+    figname="dho_loaded_test.png",  # name of the figure
+    save_name="dho_test",  # name of the saved model
+    MODEL_NAME="dho_teststep_30.eqx",  # name of the model to load
 )
 
 
@@ -897,7 +875,7 @@ main(
 # Hyperparams:
 # hidden_size= 6
 # latent_size= 2
-# width_size= 16
+# width_size= 16 # 20 for gap test
 # depth= 2
 # lr = 1e2
 # theta = 0.12
