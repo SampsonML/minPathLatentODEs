@@ -645,10 +645,26 @@ def main(
 
         # save the model
         SAVE_DIR = "saved_models"
+        save_suffix = (
+            "npoints_"
+            + str(n_points)
+            + "hidden_sz"
+            + str(hidden_size)
+            + "_latent_sz"
+            + str(latent_size)
+            + "_width"
+            + str(width_size)
+            + "_depth"
+            + str(depth)
+            + "_alpha"
+            + str(alpha)
+            + "_lossType"
+            + lossType
+        )
         if not os.path.exists(SAVE_DIR):
             os.makedirs(SAVE_DIR)
         if (step % save_every) == 0 or step == steps - 1:
-            fn = SAVE_DIR + "/" + save_name + "step_" + str(step) + ".eqx"
+            fn = SAVE_DIR + "/" + save_name + save_suffix + "_step_" + str(step) + ".eqx"
             eqx.tree_serialise_leaves(fn, model)
 
         # make the plot
