@@ -268,7 +268,7 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     )  # ranomize the ICs
     t0 = 0
     # randomize the total time series between t_end and 2 * t_end (t_end is user defined)
-    t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=1, maxval=1)
+    t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=1, maxval=5)
     ts = jr.uniform(tkey2, (dataset_size, n_points)) * (t1[:, None] - t0) + t0
     ts = jnp.sort(ts)
     dt0 = 0.1
@@ -499,9 +499,9 @@ def main(
         ys = jnp.concatenate([ys[0:gap1], ys[gap2:]])
         return ts, ys
 
-    ts_train, ys_train = jax.vmap(cut_mid)(ts_train, ys_train)
+    #ts_train, ys_train = jax.vmap(cut_mid)(ts_train, ys_train)
 
-    def add_gaussian_noise(ys, key, noise_level=0.1):
+    def add_gaussian_noise(ys, key, noise_level=0.2):
         noise = jr.normal(key, ys.shape) * noise_level
         return ys + noise
 
@@ -603,24 +603,24 @@ def main(
             model = eqx.tree_deserialise_leaves(modelName, model)
 
         # NOTE: Just for one off visualisation purposes
-        # if step ==0:
+        #if step ==0:
         #    fig2 = plt.figure(figsize=(10, 2))
         #    plt.subplots_adjust(wspace=0.2, hspace=0.2)
         #    plt.subplot(1,2,1)
-        # plt.plot(ts_i[20,:], ys_i[20,:,0], lw=1, c='darkorange', alpha=0.15, zorder=0)
-        #    plt.scatter(ts_i[30,:], ys_i[30,:,0], lw=0.1, c='darkorange',edgecolor='black',alpha=1, s=15, zorder=5)
-        #    plt.scatter(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='black', alpha=0.10, s=4,zorder=0)
-        #    plt.ylabel("pop (prey)", fontsize=16)
-        #    plt.xlabel("time (s)", fontsize=16)
+        #    plt.plot(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='navy', alpha=0.15, zorder=0)
+         #   plt.scatter(ts_i[30,:], ys_i[30,:,0], lw=0.1, c='darkorange',edgecolor='black',alpha=1, s=19, zorder=5)
+            #plt.scatter(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='black', alpha=0.10, s=4,zorder=0)
+         #   plt.ylabel("pop (prey)", fontsize=16)
+         #   plt.xlabel("time (s)", fontsize=16)
 
-        #    plt.subplot(1,2,2)
-        # plt.plot(ts_i[0:150,:], ys_i[0:150,:,1], lw=1, c='navy', alpha=0.15,zorder=0)
-        # plt.plot(ts_i[20,:], ys_i[20,:,1], lw=1, c='darkorange', alpha=0.15, zorder=0)
-        #    plt.scatter(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='black', alpha=0.1, s=4,zorder=0)
-        #    plt.scatter(ts_i[30,:], ys_i[30,:,1], lw=0.1, c='darkorange', edgecolor='black',alpha=1, s=15, zorder=5)
-        #    plt.xlabel("time (s)", fontsize=16)
-        #    plt.ylabel("pop (pred)", fontsize=16)
-        #    plt.savefig("training_data.pdf", dpi=300, bbox_inches="tight")
+         #   plt.subplot(1,2,2)
+         #   plt.plot(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='navy', alpha=0.15,zorder=0)
+            #plt.plot(ts_i[20,:], ys_i[20,:,1], lw=1, c='darkorange', alpha=0.15, zorder=0)
+            #plt.scatter(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='black', alpha=0.1, s=4,zorder=0)
+          #  plt.scatter(ts_i[30,:], ys_i[30,:,1], lw=0.1, c='darkorange', edgecolor='black',alpha=1, s=19, zorder=5)
+          #  plt.xlabel("time (s)", fontsize=16)
+          #  plt.ylabel("pop (pred)", fontsize=16)
+          #  plt.savefig("training_data.pdf", dpi=300, bbox_inches="tight")
 
         # track the path lengths and errors
         if step % error_every == 0:
@@ -675,16 +675,23 @@ def main(
 
             # create some sample times
             t_end = 60
-            ext = 30  # Change this back 2 * t_final
-            gap_start = 10
-            gap_end = 20
+            ext = 20  # Change this back 2 * t_final
+            gap_start = 100
+            gap_end = 200
             sample_t = jnp.linspace(0, t_end, 300)
+            sample_t_plot = jnp.linspace(0, t_end, 100)
+            sample_t_noisy = jnp.linspace(0, t_final, 10)
             # randomly sample for ICs
             ICs = model.sample(sample_t, key=sample_key)[0, :]
+            #ICs = jnp.array([6,7])
             # Generate the exact solution
-            exact_y = solve(sample_t, ICs)
+            exact_y = solve(sample_t_plot, ICs)
+            exact_y2 = solve(sample_t, ICs)
+            exact_y_noisy = solve(sample_t_noisy, ICs)
+            exact_y_noisy = add_gaussian_noise(exact_y_noisy, key=sample_key, noise_level=0.3)
             # Get the latent mapping for the exact ODE
-            latent, _, _ = model._latent(sample_t, exact_y, key=sample_key)
+            #latent, _, _ = model._latent(sample_t, exact_y, key=sample_key)
+            latent, _, _ = model._latent(sample_t_noisy, exact_y_noisy, key=sample_key)
             # Get the predicted trajectory
             sample_y = model._sample(sample_t, latent)
             # Now to plot the latent space trajectories
@@ -694,7 +701,7 @@ def main(
             sample_latent = np.asarray(sample_latent)
             sample_t = np.asarray(sample_t)
             sample_y = np.asarray(sample_y)
-            sz = 2
+            sz = 4
             # plot the trajectories in data space
             ax = axs[0][idx]
             if idx == 0:
@@ -703,8 +710,10 @@ def main(
                 ax.plot(sample_t, sample_y[:, 1], color=c2, label=LAB_Y, zorder=6)
             if idx == 0:
                 ax.scatter(-10, 2, color="black", s=sz, label="exact", zorder=5)
-            ax.scatter(sample_t, exact_y[:, 0], color=c1, s=sz, zorder=5)
-            ax.scatter(sample_t, exact_y[:, 1], color=c2, s=sz, zorder=5)
+                ax.scatter(sample_t_noisy, exact_y_noisy[:, 0], color=c1, marker='x' ,s=20, zorder=8, label='data')
+                ax.scatter(sample_t_noisy, exact_y_noisy[:, 1], color=c2, marker='x' ,s=20, zorder=8)
+            ax.scatter(sample_t_plot, exact_y[:, 0], color=c1, s=sz, zorder=5)
+            ax.scatter(sample_t_plot, exact_y[:, 1], color=c2, s=sz, zorder=5)
             ax.set_title(f"training step: {step}", fontsize=f_sz)
             ax.set_xlabel("time (s)", fontsize=f_sz)
             if idx == 0:
@@ -723,8 +732,7 @@ def main(
                     gap_end,
                     alpha=0.25,
                     color=c4,
-                    zorder=0,
-                    label="missing data",
+                    zorder=0
                 )
                 ax.legend()
 
@@ -732,8 +740,8 @@ def main(
             ax = axs[2][idx]
             sample_y_in = sample_y[sample_t < ext]
             sample_y_out = sample_y[sample_t >= ext]
-            exact_y_in = exact_y[sample_t < ext]
-            exact_y_out = exact_y[sample_t >= ext]
+            exact_y_in = exact_y[sample_t_plot < ext]
+            exact_y_out = exact_y[sample_t_plot >= ext]
             ax.plot(
                 sample_y_in[:, 0],
                 sample_y_in[:, 1],
@@ -775,7 +783,7 @@ def main(
 
             if rows > 3:
                 ax = axs[1][idx]
-                error = (sample_y - exact_y) ** 2
+                error = (sample_y - exact_y2) ** 2
                 error = np.sum(error, axis=1)
                 ax.plot(sample_t, error, color="black")
                 ax.axvspan(ext, t_end + 2, alpha=0.25, color=c3, label="extrapolation")
@@ -808,7 +816,7 @@ def main(
         ax[0].set_ylabel("loss", fontsize=f_sz)
 
         # the interpolation error
-        error = (sample_y - exact_y) ** 2
+        error = (sample_y - exact_y2) ** 2
         error = np.sum(error, axis=1)
         ax[1].plot(sample_t, error, color="gray")
         ax[1].axvspan(ext, t_end + 2, alpha=0.2, color="coral")
@@ -862,24 +870,24 @@ main(
     train=True,
     dataset_size=22000,  # number of data n_points
     batch_size=256,  # batch size
-    n_points=80,  # number of points in the ODE data
+    n_points=30,  # number of points in the ODE data
     lr=1e-2,  # learning rate
-    steps=1001,  # number of training steps
-    plot_every=250,  # plot every n steps
-    save_every=250,  # save the model every n steps
-    error_every=50,  # calculate the error every n steps
+    steps=5001,  # number of training steps
+    plot_every=2500,  # plot every n steps
+    save_every=2500,  # save the model every n steps
+    error_every=20,  # calculate the error every n steps
     hidden_size=6,  # hidden size of the RNN
     latent_size=2,  # latent size of the autoencoder
     width_size=24,  # width of the ODE
     depth=2,  # depth of the ODE
-    alpha=5,  # strength of the path penalty
+    alpha=3,  # strength of the path penalty
     seed=1992,  # random seed
-    t_final=30,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
+    t_final=15,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
     lossType="mahalanobis",  # {default, mahalanobis, distance}
     func="SHO",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
-    figname="dho_loaded_test.png",  # name of the figure
+    figname="dho_distance_paper_ready.png",  # name of the figure
     save_name="dho_test",  # name of the saved model
-    MODEL_NAME="dho_teststep_30.eqx",  # name of the model to load
+    MODEL_NAME="dho_test_npoints_30_hsz6_lsz2_w24_d2_lossTypemahalanobis_step_2500.eqx",  # name of the model to load
 )
 
 
