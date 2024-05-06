@@ -225,7 +225,7 @@ class LatentODE(eqx.Module):
         return self._sample(ts, latent)
 
     def _sampleLatent(self, ts, latent):
-        dt0 = 0.25  # selected as a reasonable choice for this problem
+        dt0 = 1.0  # selected as a reasonable choice for this problem
         y0 = self.latent_to_hidden(latent)
         sol = diffrax.diffeqsolve(
             diffrax.ODETerm(self.func),
@@ -271,7 +271,7 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     t1 = t_end + 1 * jr.uniform(tkey1, (dataset_size,), minval=1, maxval=5)
     ts = jr.uniform(tkey2, (dataset_size, n_points)) * (t1[:, None] - t0) + t0
     ts = jnp.sort(ts)
-    dt0 = 0.1
+    dt0 = 0.1 # needed for single measurement per day
 
 
     # --------------------------------------
@@ -279,17 +279,16 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     def Water(t, y, args):
         S = y 
         k, alpha, P = args 
-        p = P * jnp.sin(t) # water as a sine wave
-        dy = - k * S**alpha #  https://sml505.pmelchior.net/SimulationBasedInference.html#example-a-simple-reservoir
+        p = P * jnp.abs(jnp.sin(t))
+        dy = p - k * S**alpha #  https://sml505.pmelchior.net/SimulationBasedInference.html#example-a-simple-reservoir
         return dy
-
-    args = (0.5, 1.5, 0.1)  # k, alpha, P
+    args = (0.5, 1.5, 0.5)  # k, alpha, P
 
     def solve(ts, y0):
         bounds = [
             (0.02, 1),
             (1.2, 2.8),
-            (0, 2), # constant rain level for now
+            (1, 5), # constant rain level for now
         ]  # bounds for water model
         args = tuple(
             jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub)
@@ -336,10 +335,10 @@ def main(
     batch_size=256,
     n_points=100,
     lr=1e-2,
-    steps=30,
-    plot_every=10,
-    save_every=10,
-    error_every=10,
+    steps=1001,
+    plot_every=250,
+    save_every=250,
+    error_every=20,
     hidden_size=8,
     latent_size=2,
     width_size=8,
@@ -353,17 +352,22 @@ def main(
     save_name="blank",
     MODEL_NAME="blank",
 ):
+
+    # make random key
+    key = jr.PRNGKey(seed)
+    
     # Defining vector fields again for use in visualisation
     # --------------------------------------
     # WaterBucket
+    
     def Water(t, y, args):
         S = y 
         k, alpha, P = args
-        p = P * jnp.sin(t) # water as a sine wave
-        dy = - k * S**alpha #  https://sml505.pmelchior.net/SimulationBasedInference.html#example-a-simple-reservoir
+        p = P * jnp.abs(jnp.sin(t))
+        dy = p - k * S**alpha #  https://sml505.pmelchior.net/SimulationBasedInference.html#example-a-simple-reservoir
         return dy
-
-    args = (0.5, 1.5, 0.1)  # k, alpha, P
+    # rain is a Gaussian with a max height 1 of length n_points
+    args = (0.5, 1.5, 2.5)  # k, alpha, P
     vector_field = Water 
     rows = 3 
     TITLE = "Latent ODE Model: Water Bucket"
@@ -396,7 +400,6 @@ def main(
         )
         return sol.ys
 
-    key = jr.PRNGKey(seed)
     data_key, model_key, loader_key, train_key, sample_key = jr.split(key, 5)
 
     # get the data
@@ -559,7 +562,7 @@ def main(
 
             # calculate extrapolation error
             n_samples = 256
-            param_bounds = [(0.5, 0.5), (1.5, 1.5), (0.1, 0.1),] # for water
+            param_bounds = [(0.5, 0.5), (1.5, 1.5), (0.01, 0.01),] # for water
             ext = extrapolation_error(
                 model, n_samples, param_bounds=param_bounds, key=sample_key, t_ext=60
             )
@@ -643,7 +646,7 @@ def main(
                 ax.set_ylabel("water level", fontsize=f_sz)
                 ax.legend()
             else:
-                ax.plot(sample_t, sample_y, color=c1, zorder=6)
+                ax.plot(sample_t, sample_y, color=c2, zorder=6)
                 ax.axvspan(ext, t_end + 2, alpha=0.25, color=c3, label="extrapolation")
                 ax.axvspan(
                     gap_start,
@@ -760,9 +763,9 @@ main(
     batch_size=256,  # batch size
     n_points=50,  # number of points in the ODE data
     lr=1e-2,  # learning rate
-    steps=301,  # number of training steps
-    plot_every=50,  # plot every n steps
-    save_every=50,  # save the model every n steps
+    steps=31,  # number of training steps
+    plot_every=10,  # plot every n steps
+    save_every=10,  # save the model every n steps
     error_every=20,  # calculate the error every n steps
     hidden_size=8,  # hidden size of the RNN
     latent_size=3,  # latent size of the autoencoder
