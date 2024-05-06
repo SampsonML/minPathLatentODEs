@@ -605,7 +605,7 @@ def main(
             gap_end = 200
             sample_t = jnp.linspace(0, t_end, 300)
             sample_t_plot = jnp.linspace(0, t_end, 100)
-            sample_t_noisy = jnp.linspace(0, t_final, 10)
+            sample_t_noisy = jnp.linspace(0, t_final, 50)
             # randomly sample for ICs
             ICs = model.sample(sample_t, key=sample_key)[0]
             #print(ICs)
@@ -763,13 +763,13 @@ main(
     batch_size=256,  # batch size
     n_points=50,  # number of points in the ODE data
     lr=1e-2,  # learning rate
-    steps=31,  # number of training steps
-    plot_every=10,  # plot every n steps
-    save_every=10,  # save the model every n steps
+    steps=3001,  # number of training steps
+    plot_every=1000,  # plot every n steps
+    save_every=1000,  # save the model every n steps
     error_every=20,  # calculate the error every n steps
     hidden_size=8,  # hidden size of the RNN
     latent_size=3,  # latent size of the autoencoder
-    width_size=24,  # width of the ODE
+    width_size=32,  # width of the ODE
     depth=2,  # depth of the ODE
     alpha=3,  # strength of the path penalty
     seed=1992,  # random seed
