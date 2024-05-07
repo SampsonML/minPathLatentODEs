@@ -118,7 +118,7 @@ class LatentODE(eqx.Module):
 
         self.lossType = lossType
 
-    # Encoder of the VAE
+    # Encoder of the VAE edditted to return context
     def _latent(self, ts, ys, key):
         data = jnp.concatenate([ts[:, None], ys], axis=1)
         hidden = jnp.zeros((self.hidden_size,))
@@ -128,7 +128,7 @@ class LatentODE(eqx.Module):
         mean, logstd = context[: self.latent_size], context[self.latent_size :]
         std = jnp.exp(logstd)
         latent = mean + jr.normal(key, (self.latent_size,)) * std
-        return latent, mean, std
+        return latent, mean, std, context
 
     # Decoder of the VAE
     def _sample(self, ts, latent):
@@ -202,7 +202,7 @@ class LatentODE(eqx.Module):
 
     # training routine with suite of 3 loss functions
     def train(self, ts, ys, *, key):
-        latent, mean, std = self._latent(ts, ys, key)
+        latent, mean, std, context = self._latent(ts, ys, key)
         pred_ys = self._sample(ts, latent)
         pred_latent = self._sampleLatent(ts, latent)
         # the classic VAE based LatentODE-RNN from https://arxiv.org/abs/1907.03907
@@ -244,7 +244,7 @@ class LatentODE(eqx.Module):
 
     # track the path length
     def pathLength(self, ts, ys, *, key):
-        latent, mean, std = self._latent(ts, ys, key)
+        latent, mean, std, context = self._latent(ts, ys, key)
         pred_latent = self._sampleLatent(ts, latent)
         # Mahalanobis distance between latents \sqrt{(x - y)^T \Sigma^{-1} (x - y)}
         diff = jnp.diff(pred_latent, axis=0)
@@ -283,9 +283,6 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
         d_y = jnp.array([d_prey, d_predator])
         return d_y
 
-    # for testing purposes, trials use randomised coefs
-    LVE_args = (1.5, 1.5, 2.5, 1.5)  # a, b, c, d
-
     # --------------------------
     # Simple harmonic oscillator
     def SHO(t, y, args):
@@ -298,11 +295,6 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
 
     SHO_args = 0.12  # theta
 
-    # --------------------------------------
-    # WaterBucket
-    # TODO: implement Peters water model
-    def Water(t, y, args):
-        pass
 
     if func == "LVE":
         vector_field = LVE
@@ -430,7 +422,7 @@ def main(
         d_y = jnp.array([dy1, dy2])
         return d_y
 
-    SHO_args = 0.12  # theta
+    SHO_args = 0.08  # theta
 
     if func == "LVE":
         vector_field = LVE
@@ -512,7 +504,7 @@ def main(
     def test_error(model, ts, ys, key):
         # calculate MSE error
         key_test = jr.split(key, ys.shape[0])
-        latent, _, _ = jax.vmap(model._latent)(ts, ys, key=key_test)
+        latent, _, _, _ = jax.vmap(model._latent)(ts, ys, key=key_test)
         sample_y = jax.vmap(model._sample)(ts, latent)
         sample_y = np.asarray(sample_y)
         mse_ = (ys - sample_y) ** 2
@@ -534,7 +526,7 @@ def main(
         sample_t = jax.vmap(make_ts)(t0, t_e)
         ICs = jax.vmap(model.sample)(sample_t, key=e_key)[:, 0, :]
         exact_ys = jax.vmap(solveExtrap)(sample_t, ICs, args)
-        latent, _, _ = jax.vmap(model._latent)(sample_t, exact_ys, key=e_key)
+        latent, _, _, _ = jax.vmap(model._latent)(sample_t, exact_ys, key=e_key)
         sample_y = jax.vmap(model._sample)(sample_t, latent)
         mse_ = (exact_ys - sample_y) ** 2
         mse_ = jnp.sum(mse_, axis=1)
@@ -636,7 +628,7 @@ def main(
 
             # calculate extrapolation error
             n_samples = 256
-            param_bounds = [(0.12, 0.12)]  # for dho
+            param_bounds = [(0.08, 0.08)]  # for dho
             # param_bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5),] # for LVE
             ext = extrapolation_error(
                 model, n_samples, param_bounds=param_bounds, key=sample_key, t_ext=60
@@ -691,7 +683,7 @@ def main(
             exact_y_noisy = add_gaussian_noise(exact_y_noisy, key=sample_key, noise_level=0.3)
             # Get the latent mapping for the exact ODE
             #latent, _, _ = model._latent(sample_t, exact_y, key=sample_key)
-            latent, _, _ = model._latent(sample_t_noisy, exact_y_noisy, key=sample_key)
+            latent, _, _, _ = model._latent(sample_t_noisy, exact_y_noisy, key=sample_key)
             # Get the predicted trajectory
             sample_y = model._sample(sample_t, latent)
             # Now to plot the latent space trajectories
@@ -872,13 +864,13 @@ main(
     batch_size=256,  # batch size
     n_points=30,  # number of points in the ODE data
     lr=1e-2,  # learning rate
-    steps=5001,  # number of training steps
-    plot_every=2500,  # plot every n steps
-    save_every=2500,  # save the model every n steps
+    steps=2001,  # number of training steps
+    plot_every=1000,  # plot every n steps
+    save_every=1000,  # save the model every n steps
     error_every=20,  # calculate the error every n steps
-    hidden_size=6,  # hidden size of the RNN
+    hidden_size=2,  # hidden size of the RNN
     latent_size=2,  # latent size of the autoencoder
-    width_size=24,  # width of the ODE
+    width_size=16,  # width of the ODE
     depth=2,  # depth of the ODE
     alpha=3,  # strength of the path penalty
     seed=1992,  # random seed
