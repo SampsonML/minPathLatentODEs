@@ -23,8 +23,6 @@ import cmasher as cmr
 from matplotlib.gridspec import GridSpec
 import corner
 
-# debugging
-print(f"Optax version {optax.__version__}")
 
 # import LVE model things
 from latentPathMin import LatentODE, get_data, dataloader
@@ -53,7 +51,6 @@ mpl.rcParams["mathtext.fontset"] = "dejavuserif"
 mpl.rcParams.update({"text.usetex": True})
 # ---------------------------------------------- #
 
-
 # --------------------
 # Define the MLP model
 class inferenceMLP(eqx.Module):
@@ -67,9 +64,11 @@ class inferenceMLP(eqx.Module):
             out_size=output_dim,
             width_size=hidden_dim,
             depth=num_layers,
-            activation=jnn.softplus,
+            activation=jnn.relu,
+            final_activation=lambda x: x,
             key=key,
         )
+
 
     def __call__(self, x):
         return self.mlp(x)
@@ -167,22 +166,21 @@ model = inferenceMLP(
     key=model_key,
 )
 
+
+loss = model.train(params_train[0,:], latent, params_train[0,:])
+print(f"Loss: {loss}")
+
 # create the loss function
 @eqx.filter_value_and_grad
-def loss(params, model, context, latent):
-    batch_size, _ = ts_i.shape
+def loss(model, params, context, latent):
     loss = jax.vmap(model.train)(params, context, latent)
     return jnp.mean(loss)
 
 
 #@eqx.filter_jit
 def make_step(model, opt_state, params, context, latents):
-    value, grads = loss(params, model, context, latents)
+    value, grads = loss(model, params, context, latents)
     preds = jax.vmap(model)(latents)
-    #print(f"Preds: {preds}")
-    #print(f"Value: {value}")
-    print(f"Grads: {grads}")
-    #print(f"Opt state: {opt_state}")
     updates, opt_state = optim.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
     return value, model, opt_state
