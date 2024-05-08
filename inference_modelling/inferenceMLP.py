@@ -21,6 +21,10 @@ import optax
 import os
 import cmasher as cmr
 from matplotlib.gridspec import GridSpec
+import corner
+
+# debugging
+print(f"Optax version {optax.__version__}")
 
 # import LVE model things
 from latentPathMin import LatentODE, get_data, dataloader
@@ -53,47 +57,41 @@ mpl.rcParams.update({"text.usetex": True})
 # --------------------
 # Define the MLP model
 class inferenceMLP(eqx.Module):
-    def __init__(self, input_dim, output_dim, hidden_dim, num_layers):
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.hidden_dim = hidden_dim
-        self.num_layers = num_layers
+    mlp: eqx.nn.MLP
 
+    def __init__(self, input_dim, output_dim, hidden_dim, num_layers, key, **kwargs):
+        super().__init__(**kwargs)
         # Define the MLP
         self.mlp = eqx.nn.MLP(
             in_size=input_dim,
             out_size=output_dim,
             width_size=hidden_dim,
             depth=num_layers,
-            activation=jnn.relu,
-            key=eqx.PRNGKey(0),
+            activation=jnn.softplus,
+            key=key,
         )
 
     def __call__(self, x):
         return self.mlp(x)
 
+    # define a loss function inside model
+    # for now just predict with initial latent variables
+    @staticmethod
+    def _loss(params, preds):
+        loss = jnp.mean((preds - params) ** 2)
+        return loss 
 
-# ------------------------
-# Define the loss function
-def loss_fn(params, model, context, latents):
-    
-    # Generate the parameter predictions
-    preds = model(latents)
-
-    # or try with the latents
-    #preds = model(context)
-
-    # Compute the loss
-    loss = jnp.mean((preds - params) ** 2)
-    loss = jnp.sum(loss, axis=1)
-    return loss
+    # define a train call for the model 
+    def train(self, params, context, latents):
+        preds = self.mlp(latents)
+        return self._loss(params, preds)
 
 
 # ------------------------
 # Define the training step
 
 # get pseudo RNG keys
-key = jr.PRNGKey(seed)
+key = jr.PRNGKey(1992)
 data_key, model_key, loader_key, train_key, sample_key = jr.split(key, 5)
 
 # get the data
@@ -102,6 +100,7 @@ IC_min = 2
 IC_max = 4 
 n_points=100 
 dataset_size = 5000
+t_final = 20
 ts, ys, params, ICs = get_data(
     dataset_size,
     key=data_key,
@@ -131,7 +130,7 @@ ts_test, ys_test, params_test, ICs_test = (
 )
 
 # load the trained latentODE-RNN model
-MODEL_NAME = "LatentODE_RNN_step_100.eqx"
+MODEL_NAME = "lve_new_a1__npoints_250_hsz4_lsz4_w60_d3_lossTypemahalanobis_step_12000.eqx"
 ODEhidden_size = 4
 ODElatent_size = 4
 ODEwidth_size = 60
@@ -151,40 +150,46 @@ ODEmod = LatentODE(
     lossType="mahalanobis",
 )
 
-ODEmodel = eqx.tree_deserialise_leaves(MODEL_NAME, mod)
-
+ODEmodel = eqx.tree_deserialise_leaves("trainedLatentODEs/" + MODEL_NAME, ODEmod)
+latent, _, _, _, = ODEmodel._latent(ts_train[0,:], ys_train[0,:,:], model_key)
 
 # ------------------------
 # Instantiate the MLP model
 num_params = 4  # for now hard coding the number of parameters in LVE model exclude ICs
 hidden_dim = 32
+input_size = latent.shape[-1]  # size of the latent vector from the LatentODE model
+num_layers = 3
 model = inferenceMLP(
-    input_dim=latent_size,
-    oputput_dim=num_params,
+    input_dim=input_size,
+    output_dim=num_params,
     hidden_dim=hidden_dim,
     num_layers=num_layers,
+    key=model_key,
 )
 
 # create the loss function
 @eqx.filter_value_and_grad
 def loss(params, model, context, latent):
     batch_size, _ = ts_i.shape
-    key_i = jr.split(key_i, batch_size)
-    loss = jax.vmap(loss_fn)(params, model, context, latents)
+    loss = jax.vmap(model.train)(params, context, latent)
     return jnp.mean(loss)
 
 
-@eqx.filter_jit
-def make_step(model, opt_state, params, context, latents, key_i):
+#@eqx.filter_jit
+def make_step(model, opt_state, params, context, latents):
     value, grads = loss(params, model, context, latents)
-    key_i = jr.split(key_i, 1)[0]
+    preds = jax.vmap(model)(latents)
+    #print(f"Preds: {preds}")
+    #print(f"Value: {value}")
+    print(f"Grads: {grads}")
+    #print(f"Opt state: {opt_state}")
     updates, opt_state = optim.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
-    return value, model, opt_state, key_i
+    return value, model, opt_state
 
 
 # training hyperparams
-batch_size=256
+batch_size=5
 steps = 100
 lr=1e-2
 train = True
@@ -210,13 +215,13 @@ for step, (ts_i, ys_i, params_i, ICs_i) in zip(
         start = time.time()
         # get the context and latents from the trained LatentODE model
         ODE_key = jr.split(model_key, ts_i.shape[0])
-        latent, _, _, context = jax.vmap(ODEmodel)(ts_i, ys_i, ODE_key)
-        value, model, opt_state, train_key = make_step(
+        latent, _, _, context = jax.vmap(ODEmodel._latent)(ts_i, ys_i, ODE_key)
+        value, model, opt_state, = make_step(
             model,
             opt_state,
             params_i,
-            ys_i,
-            train_key,
+            context,
+            latent,
         )
         end = time.time()
         print(f"Step: {step}, Loss: {value}, Computation time: {end - start}")
@@ -238,8 +243,6 @@ for step, (ts_i, ys_i, params_i, ICs_i) in zip(
 # ------------------------------------------------------------------------------- #
 # ------------------------ PLOTTING AND INFERENCE ------------------------------- #
 # ------------------------------------------------------------------------------- #
-import corner
-
 # plot the loss 
 fig = plt.figure(figsize=(8, 6))
 plt.plot(loss_vector, color='darkorchid', lw=2)
@@ -252,6 +255,7 @@ bounds = [(1.0, 1.0), (1.0, 1.0), (0.5, 5.0), (0.5, 0.5)]  # LVE param bounds
 IC_min = 3
 IC_max = 3
 n_trials = 50
+t_final = 20
 ts, ys, params, ICs = get_data(
     n_trials,
     key=data_key,
