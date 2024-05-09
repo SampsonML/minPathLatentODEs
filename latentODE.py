@@ -261,8 +261,8 @@ class LatentODE(eqx.Module):
 def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     ykey, tkey1, tkey2 = jr.split(key, 3)
     # NOTE: the initial conditions are randomised for each dataset by min and max, set manually for now
-    IC_min = 1
-    IC_max = 4
+    IC_min = 3
+    IC_max = 3
     y0 = jr.uniform(
         ykey, (dataset_size, 2), minval=IC_min, maxval=IC_max
     )  # ranomize the ICs
@@ -327,10 +327,10 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
     # Hard coding some things for now to be sure works as expected
     def solveLVE(ts, y0, key):
         bounds = [
-            (0.75, 1.25),
-            (0.75, 1.25),
-            (1.75, 2.25),
-            (0.75, 1.25),
+            (1.0, 3.5),
+            (1.0, 3.5),
+            (0.5, 0.6),
+            (0.5, 0.6),
         ]  # same as https://arxiv.org/pdf/2105.03835.pdf
         args = tuple(
             jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub)
@@ -555,6 +555,7 @@ def main(
     @eqx.filter_jit
     def make_step(model, opt_state, ts_i, ys_i, key_i):
         value, grads = loss(model, ts_i, ys_i, key_i)
+        print(f"grads shape: {grads.shape}")
         key_i = jr.split(key_i, 1)[0]
         updates, opt_state = optim.update(grads, opt_state)
         model = eqx.apply_updates(model, updates)
@@ -594,25 +595,41 @@ def main(
             modelName = "saved_models/" + MODEL_NAME
             model = eqx.tree_deserialise_leaves(modelName, model)
 
-        # NOTE: Just for one off visualisation purposes
-        #if step ==0:
-        #    fig2 = plt.figure(figsize=(10, 2))
-        #    plt.subplots_adjust(wspace=0.2, hspace=0.2)
-        #    plt.subplot(1,2,1)
-        #    plt.plot(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='navy', alpha=0.15, zorder=0)
-         #   plt.scatter(ts_i[30,:], ys_i[30,:,0], lw=0.1, c='darkorange',edgecolor='black',alpha=1, s=19, zorder=5)
-            #plt.scatter(ts_i[0:250,:], ys_i[0:250,:,0], lw=1, c='black', alpha=0.10, s=4,zorder=0)
-         #   plt.ylabel("pop (prey)", fontsize=16)
-         #   plt.xlabel("time (s)", fontsize=16)
+    # now introduce the longer time sequential training
+    # get the data
+    ts, ys = get_data(
+        dataset_size, key=data_key, func=func, t_end=50, n_points=n_points
+    )
 
-         #   plt.subplot(1,2,2)
-         #   plt.plot(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='navy', alpha=0.15,zorder=0)
-            #plt.plot(ts_i[20,:], ys_i[20,:,1], lw=1, c='darkorange', alpha=0.15, zorder=0)
-            #plt.scatter(ts_i[0:250,:], ys_i[0:250,:,1], lw=1, c='black', alpha=0.1, s=4,zorder=0)
-          #  plt.scatter(ts_i[30,:], ys_i[30,:,1], lw=0.1, c='darkorange', edgecolor='black',alpha=1, s=19, zorder=5)
-          #  plt.xlabel("time (s)", fontsize=16)
-          #  plt.ylabel("pop (pred)", fontsize=16)
-          #  plt.savefig("training_data.pdf", dpi=300, bbox_inches="tight")
+    # make a test split -- randomly select 10% of the data for testing
+    test_size = int(0.1 * dataset_size)
+    test_idx = jr.choice(data_key, dataset_size, (test_size,), replace=False)
+    train_idx = jnp.setdiff1d(jnp.arange(dataset_size), test_idx)
+    ts_train, ys_train = ts[train_idx], ys[train_idx]
+    ts_test, ys_test = ts[test_idx], ys[test_idx]
+
+    # the sequential training run 
+    for step, (ts_i, ys_i) in zip(
+        range(steps), dataloader((ts_train, ys_train), batch_size, key=loader_key)
+    ):
+        if train:
+            start = time.time()
+            value, model, opt_state, train_key = make_step(
+                model,
+                opt_state,
+                ts_i,
+                ys_i,
+                train_key,
+            )
+            end = time.time()
+            print(f"Step: {step}, Loss: {value}, Computation time: {end - start}")
+            loss_vector.append(value)
+
+        # load the model instead here
+        else:
+            modelName = "saved_models/" + MODEL_NAME
+            model = eqx.tree_deserialise_leaves(modelName, model)
+
 
         # track the path lengths and errors
         if step % error_every == 0:
@@ -860,25 +877,25 @@ def main(
 # run the code son
 main(
     train=True,
-    dataset_size=22000,  # number of data n_points
+    dataset_size=10000,  # number of data n_points
     batch_size=256,  # batch size
-    n_points=30,  # number of points in the ODE data
-    lr=1e-2,  # learning rate
-    steps=2001,  # number of training steps
+    n_points=100,  # number of points in the ODE data
+    lr=5e-3,  # learning rate
+    steps=6001,  # number of training steps
     plot_every=1000,  # plot every n steps
     save_every=1000,  # save the model every n steps
-    error_every=20,  # calculate the error every n steps
-    hidden_size=2,  # hidden size of the RNN
-    latent_size=2,  # latent size of the autoencoder
-    width_size=16,  # width of the ODE
-    depth=2,  # depth of the ODE
-    alpha=3,  # strength of the path penalty
+    error_every=100,  # calculate the error every n steps
+    hidden_size=12,  # hidden size of the RNN
+    latent_size=4,  # latent size of the autoencoder
+    width_size=60,  # width of the ODE
+    depth=3,  # depth of the ODE
+    alpha=2,  # strength of the path penalty
     seed=1992,  # random seed
-    t_final=15,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
+    t_final=25,  # final time of the ODE (note this is randomised between t_final and 2*t_final)
     lossType="mahalanobis",  # {default, mahalanobis, distance}
-    func="SHO",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
-    figname="dho_distance_paper_ready.png",  # name of the figure
-    save_name="dho_test",  # name of the saved model
+    func="LVE",  # {LVE, SHO, PFHO} Lotka-Volterra, Simple (damped) Harmonic Oscillator, Periodically Forced Harmonic Oscillator
+    figname="sequential_a2_lz4_hz12_nn60.png",  # name of the figure
+    save_name="sequential_a2",  # name of the saved model
     MODEL_NAME="dho_test_npoints_30_hsz6_lsz2_w24_d2_lossTypemahalanobis_step_2500.eqx",  # name of the model to load
 )
 
