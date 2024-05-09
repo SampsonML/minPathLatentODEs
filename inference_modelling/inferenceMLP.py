@@ -82,7 +82,8 @@ class inferenceMLP(eqx.Module):
 
     # define a train call for the model 
     def train(self, params, context, latents):
-        preds = self.mlp(latents)
+        preds = self.mlp(context)
+        #preds = self.mlp(latents)
         return self._loss(params, preds)
 
 
@@ -94,12 +95,12 @@ key = jr.PRNGKey(1992)
 data_key, model_key, loader_key, train_key, sample_key = jr.split(key, 5)
 
 # get the data
-bounds = [(1.0, 2.0), (1.0, 2.0), (0.5, 1.0), (0.5, 1.0)]  # LVE param bounds
-IC_min = 2
-IC_max = 4 
-n_points=100 
-dataset_size = 5000
-t_final = 20
+bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5)]  # LVE param bounds
+IC_min = 3
+IC_max = 3 
+n_points=250 
+dataset_size = 10000
+t_final = 40
 ts, ys, params, ICs = get_data(
     dataset_size,
     key=data_key,
@@ -128,11 +129,14 @@ ts_test, ys_test, params_test, ICs_test = (
     ICs[test_idx],
 )
 
+
+
 # load the trained latentODE-RNN model
-MODEL_NAME = "lve_new_a1__npoints_250_hsz4_lsz4_w60_d3_lossTypemahalanobis_step_12000.eqx"
-ODEhidden_size = 4
+MODEL_NAME = "lve_static_a2__npoints_250_hsz16_lsz4_w70_d3_lossTypemahalanobis_step_4000.eqx"
+#MODEL_NAME="lve_new_a2__npoints_250_hsz5_lsz5_w60_d3_lossTypedefault_step_14000.eqx"
+ODEhidden_size = 16
 ODElatent_size = 4
-ODEwidth_size = 60
+ODEwidth_size = 70
 ODEdepth = 3 
 alpha = 2
 key = jr.PRNGKey(1992)
@@ -150,13 +154,13 @@ ODEmod = LatentODE(
 )
 
 ODEmodel = eqx.tree_deserialise_leaves("trainedLatentODEs/" + MODEL_NAME, ODEmod)
-latent, _, _, _, = ODEmodel._latent(ts_train[0,:], ys_train[0,:,:], model_key)
+latent, _, _, context, = ODEmodel._latent(ts_train[0,:], ys_train[0,:,:], model_key)
 
 # ------------------------
 # Instantiate the MLP model
 num_params = 4  # for now hard coding the number of parameters in LVE model exclude ICs
-hidden_dim = 32
-input_size = latent.shape[-1]  # size of the latent vector from the LatentODE model
+hidden_dim = 40
+input_size = context.shape[-1]  # size of the latent vector from the LatentODE model
 num_layers = 3
 model = inferenceMLP(
     input_dim=input_size,
@@ -166,9 +170,6 @@ model = inferenceMLP(
     key=model_key,
 )
 
-
-loss = model.train(params_train[0,:], latent, params_train[0,:])
-print(f"Loss: {loss}")
 
 # create the loss function
 @eqx.filter_value_and_grad
@@ -180,16 +181,15 @@ def loss(model, params, context, latent):
 #@eqx.filter_jit
 def make_step(model, opt_state, params, context, latents):
     value, grads = loss(model, params, context, latents)
-    preds = jax.vmap(model)(latents)
     updates, opt_state = optim.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
     return value, model, opt_state
 
 
 # training hyperparams
-batch_size=5
-steps = 100
-lr=1e-2
+batch_size=256
+steps = 200
+lr=1e-3
 train = True
 loss_vector = []
 
@@ -249,11 +249,11 @@ plt.ylabel("Loss", fontsize=16)
 plt.savefig("inferenceMLP_loss.png", dpi=300)
 
 # test the inference capabilities for a single fixed param/IC combo
-bounds = [(1.0, 1.0), (1.0, 1.0), (0.5, 5.0), (0.5, 0.5)]  # LVE param bounds
+bounds = [(1.0, 1.0), (1.0, 1.0), (2.0, 2.0), (1.0, 1.0)]  # LVE param bounds
 IC_min = 3
 IC_max = 3
-n_trials = 50
-t_final = 20
+n_trials = 500
+n_points=200
 ts, ys, params, ICs = get_data(
     n_trials,
     key=data_key,
@@ -264,14 +264,44 @@ ts, ys, params, ICs = get_data(
     IC_max=IC_max,
 )
 
+
+def add_gaussian_noise(ys, key, noise_level=0.02):
+    noise = jr.normal(key, ys.shape) * noise_level
+    return ys + noise
+
+# add some jitter to the data
+key_noise = jr.split(model_key, ys.shape[0])
+ys = jax.vmap(add_gaussian_noise)(ys, key_noise)
+
+# print first 5 params for debugging 
+print(f"First 5 params: {params[:5]}")
+
 # get the context and latents from the trained LatentODE model
 ODE_key = jr.split(model_key, n_trials)
-latent_test, _, _, context_test = jax.vmap(ODEmodel)(ts_test, ys_test, ODE_key)
+latent_test, _, _, context_test = jax.vmap(ODEmodel._latent)(ts, ys, ODE_key)
 
 # get the parameter predictions
-params_pred = jax.vmap(model)(latent_test)
-labels = [r'$\alpha$', r'$\Beta$', r'$\gamma$', r'$\delta$']
-fig = corner.corner(np.array(params_pred), labels=labels, truths=np.array(params_test))
+params_pred = jax.vmap(model)(context_test)
+data = np.array([params_pred])
+data = data.reshape([n_trials, 4])
+params_true = np.array([1.0, 1.0, 2.0, 1.0])
+print(f"shape of params pred: {params_pred.shape}")
+labels = [r'$\alpha$', r'$\beta$', r'$\gamma$', r'$\delta$']
+fig = corner.corner(
+    data,
+    labels=labels,
+    quantiles=[0.16, 0.5, 0.84],
+    show_titles=True,
+    title_kwargs={"fontsize": 18},
+    truths=params_true,
+    truth_color='firebrick',
+    smooth=1.0,
+    smooth1d=1.0,
+    color='navy',
+    plot_datapoints=True,
+)
+
 plt.savefig("inferenceMLP_corner.png", dpi=300)
+plt.savefig("inferenceMLP_corner.pdf", dpi=300)
 
 
