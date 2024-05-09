@@ -100,7 +100,7 @@ IC_min = 3
 IC_max = 3 
 n_points=250 
 dataset_size = 10000
-t_final = 40
+t_final = 25
 ts, ys, params, ICs = get_data(
     dataset_size,
     key=data_key,
@@ -130,9 +130,11 @@ ts_test, ys_test, params_test, ICs_test = (
 )
 
 
+# print first 10 parameter combos 
+print(f"First 10 params: {params[:10]}")
 
 # load the trained latentODE-RNN model
-MODEL_NAME = "lve_static_a2__npoints_250_hsz16_lsz4_w70_d3_lossTypemahalanobis_step_4000.eqx"
+MODEL_NAME = "lve_static_a2__npoints_250_hsz16_lsz4_w70_d3_lossTypemahalanobis_step_8000.eqx"
 #MODEL_NAME="lve_new_a2__npoints_250_hsz5_lsz5_w60_d3_lossTypedefault_step_14000.eqx"
 ODEhidden_size = 16
 ODElatent_size = 4
@@ -187,8 +189,8 @@ def make_step(model, opt_state, params, context, latents):
 
 
 # training hyperparams
-batch_size=256
-steps = 200
+batch_size=32
+steps = 1500
 lr=1e-3
 train = True
 loss_vector = []
@@ -249,11 +251,15 @@ plt.ylabel("Loss", fontsize=16)
 plt.savefig("inferenceMLP_loss.png", dpi=300)
 
 # test the inference capabilities for a single fixed param/IC combo
-bounds = [(1.0, 1.0), (1.0, 1.0), (2.0, 2.0), (1.0, 1.0)]  # LVE param bounds
+alpha = 1.4
+beta = 1.4 
+delta = 2.4 
+gamma = 1.4
+bounds = [(alpha, alpha), (beta, beta), (delta, delta), (gamma, gamma)]  # LVE param bounds
 IC_min = 3
 IC_max = 3
 n_trials = 500
-n_points=200
+n_points=75
 ts, ys, params, ICs = get_data(
     n_trials,
     key=data_key,
@@ -265,7 +271,7 @@ ts, ys, params, ICs = get_data(
 )
 
 
-def add_gaussian_noise(ys, key, noise_level=0.02):
+def add_gaussian_noise(ys, key, noise_level=0.25):
     noise = jr.normal(key, ys.shape) * noise_level
     return ys + noise
 
@@ -284,7 +290,7 @@ latent_test, _, _, context_test = jax.vmap(ODEmodel._latent)(ts, ys, ODE_key)
 params_pred = jax.vmap(model)(context_test)
 data = np.array([params_pred])
 data = data.reshape([n_trials, 4])
-params_true = np.array([1.0, 1.0, 2.0, 1.0])
+params_true = np.array([alpha, beta, delta, gamma])
 print(f"shape of params pred: {params_pred.shape}")
 labels = [r'$\alpha$', r'$\beta$', r'$\gamma$', r'$\delta$']
 fig = corner.corner(
@@ -294,10 +300,10 @@ fig = corner.corner(
     show_titles=True,
     title_kwargs={"fontsize": 18},
     truths=params_true,
-    truth_color='firebrick',
-    smooth=1.0,
-    smooth1d=1.0,
-    color='navy',
+    truth_color='indigo',
+    smooth=True,
+    smooth1d=True,
+    color='gray',
     plot_datapoints=True,
 )
 

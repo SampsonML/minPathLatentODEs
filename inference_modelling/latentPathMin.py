@@ -227,19 +227,14 @@ def get_data(dataset_size, *, key, bounds, t_end=1, n_points=100, IC_min=1, IC_m
         d_y = jnp.array([d_prey, d_predator])
         return d_y
 
-    # Hard coding some things for now to be sure works as expected
     def solve(ts, y0, bounds, key):
-        #bounds = [
-        #    (0.85, 2.2),
-        #    (0.85, 2.2),
-        #    (0.45, 1.05),
-        #    (0.45, 1.05),
-        #]  # same as https://arxiv.org/pdf/2105.03835.pdf
-        args = tuple(
-            jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub)
-            for (lb, ub) in bounds
-        )
-        args = jnp.squeeze(jnp.asarray(args))
+        a_key, b_key, c_key, d_key = jr.split(key, 4)
+        # randomly sample for each value in the bounds 
+        alpha = jax.random.uniform(a_key, shape=(1,), minval=bounds[0][0], maxval=bounds[0][1])
+        beta = jax.random.uniform(b_key, shape=(1,), minval=bounds[1][0], maxval=bounds[1][1])
+        delta = jax.random.uniform(c_key, shape=(1,), minval=bounds[2][0], maxval=bounds[2][1])
+        gamma = jax.random.uniform(d_key, shape=(1,), minval=bounds[3][0], maxval=bounds[3][1])
+        args = jnp.squeeze(jnp.asarray([alpha, beta, delta, gamma]))
         sol = diffrax.diffeqsolve(
             diffrax.ODETerm(LVE),
             diffrax.Tsit5(),
