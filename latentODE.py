@@ -324,21 +324,17 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
         )
         return sol.ys
 
-    # Hard coding some things for now to be sure works as expected
-    def solveLVE(ts, y0, key):
-        bounds = [
-            (1.0, 3.5),
-            (1.0, 3.5),
-            (0.5, 0.6),
-            (0.5, 0.6),
-        ]  # same as https://arxiv.org/pdf/2105.03835.pdf
-        args = tuple(
-            jax.random.uniform(key, shape=(1,), minval=lb, maxval=ub)
-            for (lb, ub) in bounds
-        )
-        args = jnp.squeeze(jnp.asarray(args))
+    
+    def solveLVE(ts, y0, bounds, key):
+        a_key, b_key, c_key, d_key = jr.split(key, 4)
+        # randomly sample for each value in the bounds 
+        alpha = jax.random.uniform(a_key, shape=(1,), minval=bounds[0][0], maxval=bounds[0][1])
+        beta = jax.random.uniform(b_key, shape=(1,), minval=bounds[1][0], maxval=bounds[1][1])
+        delta = jax.random.uniform(c_key, shape=(1,), minval=bounds[2][0], maxval=bounds[2][1])
+        gamma = jax.random.uniform(d_key, shape=(1,), minval=bounds[3][0], maxval=bounds[3][1])
+        args = jnp.squeeze(jnp.asarray([alpha, beta, delta, gamma]))
         sol = diffrax.diffeqsolve(
-            diffrax.ODETerm(vector_field),
+            diffrax.ODETerm(LVE),
             diffrax.Tsit5(),
             ts[0],
             ts[-1],
@@ -347,13 +343,28 @@ def get_data(dataset_size, *, key, func=None, t_end=1, n_points=100):
             args=args,
             saveat=diffrax.SaveAt(ts=ts),
         )
-        return sol.ys
+        return sol.ys, args
 
     # for now seperate the call to LVE to allow random input params
+    key = jax.random.PRNGKey(0)
+    key_dataset = jr.split(key, dataset_size)
+    # make the bounds the same size as the dataset
+    bounds = jnp.repeat(jnp.array(bounds)[None, :], dataset_size, axis=0)   
+    ys, params = jax.vmap(solve)(ts, y0, bounds, key_dataset)
+
+    return ts, ys
+
+# for now seperate the call to LVE to allow random input params
     if func == "LVE":
+        bounds = [
+            (1.0, 3.5),
+            (1.0, 3.5),
+            (0.5, 0.6),
+            (0.5, 0.6),
+        ]  # same as https://arxiv.org/pdf/2105.03835.pdf
         key = jax.random.PRNGKey(0)
         key_dataset = jr.split(key, dataset_size)
-        ys = jax.vmap(solveLVE)(ts, y0, key_dataset)
+        ys = jax.vmap(solveLVE)(ts, y0, bounds, key_dataset)
     else:
         ys = jax.vmap(solve)(ts, y0)
 
@@ -645,8 +656,7 @@ def main(
 
             # calculate extrapolation error
             n_samples = 256
-            param_bounds = [(0.08, 0.08)]  # for dho
-            # param_bounds = [(0.5, 1.5), (0.5, 1.5), (1.5, 2.5), (0.5, 1.5),] # for LVE
+            param_bounds = [(1.0, 3.5), (1.0, 3.5), (0.5, 0.6), (0.5, 0.6),] # for LVE
             ext = extrapolation_error(
                 model, n_samples, param_bounds=param_bounds, key=sample_key, t_ext=60
             )
@@ -877,8 +887,8 @@ def main(
 # run the code son
 main(
     train=True,
-    dataset_size=10000,  # number of data n_points
-    batch_size=256,  # batch size
+    dataset_size=2000,  # number of data n_points
+    batch_size=20,  # batch size
     n_points=100,  # number of points in the ODE data
     lr=5e-3,  # learning rate
     steps=6001,  # number of training steps
