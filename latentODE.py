@@ -206,7 +206,7 @@ class LatentODE(eqx.Module):
         pred_ys = self._sample(ts, latent)
         int_fac = 10
         ts_interp = jnp.linspace(ts[0], ts[-1], ts.size() * int_fac)
-        pred_latent = self._sampleLatent(ts, latent)
+        pred_latent = self._sampleLatent(ts_interp, latent)
         # the classic VAE based LatentODE-RNN from https://arxiv.org/abs/1907.03907
         if self.lossType == "default":
             return self._loss(ys, pred_ys, mean, std)
