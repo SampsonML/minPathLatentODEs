@@ -204,6 +204,8 @@ class LatentODE(eqx.Module):
     def train(self, ts, ys, *, key):
         latent, mean, std, context = self._latent(ts, ys, key)
         pred_ys = self._sample(ts, latent)
+        int_fac = 10
+        ts_interp = jnp.linspace(ts[0], ts[-1], ts.size() * int_fac)
         pred_latent = self._sampleLatent(ts, latent)
         # the classic VAE based LatentODE-RNN from https://arxiv.org/abs/1907.03907
         if self.lossType == "default":
